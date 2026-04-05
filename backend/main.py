@@ -18,8 +18,8 @@ spam_cls: Pipeline | None = None
 async def lifespan(app: FastAPI):
     print("載入量化Bert ONNX推理模型...")
     global spam_cls
-    tokenizer = AutoTokenizer.from_pretrained(HF_REPO_ID, use_auth_token=HF_TOKEN)
-    model = ORTModelForSequenceClassification.from_pretrained(HF_REPO_ID, file_name="model_quantized.onnx", use_auth_token=HF_TOKEN, provider="CPUExecutionProvider")
+    tokenizer = AutoTokenizer.from_pretrained(HF_REPO_ID, token=HF_TOKEN)
+    model = ORTModelForSequenceClassification.from_pretrained(HF_REPO_ID, file_name="model_quantized.onnx", token=HF_TOKEN, provider="CPUExecutionProvider")
     spam_cls = pipeline("text-classification", model=cast(Any, model), tokenizer=tokenizer, truncation=True, device="cpu")
     yield
     print("清理資源...")
