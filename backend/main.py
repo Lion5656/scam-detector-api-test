@@ -95,4 +95,3 @@ def predict_api(req: Request):
 @app.get("/")
 def home():
     return {"message": "AI API is running..."}
-    return {"message": "AI API is running..."}
