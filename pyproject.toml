@@ -1,0 +1,15 @@
+[project]
+name = "scam-detection-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi[standard]>=0.135.3",
+    "gdown>=5.2.1",
+    "torch>=2.11.0",
+    "transformers>=5.5.0",
+    "uvicorn>=0.42.0",
+]
+[tool.fastapi]
+entrypoint = "backend.main:app"
