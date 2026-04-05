@@ -7,7 +7,7 @@ FROM python:3.10-slim
 WORKDIR app
 
 # 安裝套件依賴
-COPY requirements.txt
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 搬入原始碼
