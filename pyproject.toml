@@ -6,10 +6,10 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi[standard]",
-    "gdown",
-    "optimum",
+    "optimum[onnxruntime]>=1.16.0",
+    "pydantic-settings>=2.13.1",
     "torch",
-    "transformers",
+    "transformers>=4.40.0",
     "uvicorn",
 ]
 [tool.fastapi]

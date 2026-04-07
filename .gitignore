@@ -10,6 +10,6 @@ wheels/
 .venv
 .vscode
 
-ckip-bert-ready/
-bert_onnx_int8/
-bert_onnx_output/
+models/
+.env
+
