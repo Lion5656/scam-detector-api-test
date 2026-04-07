@@ -25,8 +25,8 @@ class InferenceEngine():
     def load_model(self):
         print("載入量化Bert ONNX推理模型...")
         id = settings.HF_REPO_ID
-        token = settings.HF_TOKEN
         device = settings.DEVICE
+        token = os.getenv("HF_TOKEN")
         tokenizer = AutoTokenizer.from_pretrained(id, token=token)
         model = ORTModelForSequenceClassification.from_pretrained(id, file_name="model_quantized.onnx", token=token, provider="CPUExecutionProvider")
         self.classifier = pipeline("text-classification", model=cast(Any, model), tokenizer=tokenizer, truncation=True, device=device)
