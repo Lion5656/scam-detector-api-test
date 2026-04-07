@@ -13,9 +13,8 @@ class Settings(BaseSettings):
     APP_NAME: str = "Scam detetcor"
     DEBUG: bool = True
 
-    # huggingface repo id, 模型token
+    # huggingface repo id
     HF_REPO_ID: str = "kko12/spam-detector-chinese"
-    HF_TOKEN: str | None = os.getenv("HF_TOKEN")
 
     # 推理權重分配
     REGEX_WEIGHT: float = 0.65
