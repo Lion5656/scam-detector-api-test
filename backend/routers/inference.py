@@ -8,7 +8,7 @@ from backend.services.ai_engine import inference_engine
 router = APIRouter(prefix="/v1", tags=["inference"]) # 加上v1前綴，UI加上inference群組
 
 # regex + model 分析
-@router.post("/analyze", response_model=Response, summary="執行文本風險分析", description="結合正則比對和模型預測")
+@router.post("/analyze", response_model=Response, summary="執行文本風險分析", description="結合正則模糊比對和模型預測")
 async def anaylze_text(req: Request):
     try:
         result = await inference_engine.cascaded_detector(req)
