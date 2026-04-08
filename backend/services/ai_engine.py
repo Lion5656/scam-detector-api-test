@@ -20,7 +20,7 @@ class InferenceEngine():
             "LOW": "低風險",
             "MEDIUM": "中等風險",
             "HIGH": "高風險", 
-            "UNKNOWN": "未知"
+            "UNKNOWN": "未知風險"
         }
         self.rank_map: Dict[str, int] = {
             "高風險": 3,
@@ -111,7 +111,7 @@ class InferenceEngine():
     # 正則模糊比對 + 模型預測
     async def cascaded_detector(self, req: Request) -> Response:
         text = req.text
-        
+    
         if not text:
             raise HTTPException(status_code=400, detail="text不能為空白")
         
@@ -157,6 +157,8 @@ class InferenceEngine():
             model_eval = 50
         elif model_label == "低風險":
             model_eval = 20
+        else:
+            model_eval = -1  # 未知風險
 
         final_score = max(rule_score, (rule_base + rule_score) * w_rule + model_eval * w_model)
 
@@ -166,6 +168,8 @@ class InferenceEngine():
             return Response(label="中等風險", score=final_score, confidence_score=model_conf_score, reason=f"此訊息{rule_reason}, 評估風險為中等")
         if final_score >= 40:
             return Response(label="中等風險", score=final_score, confidence_score=model_conf_score, reason="此訊息疑似有詐騙風險，但特徵較模糊，評估風險為中等")
+        if model_eval < 0:
+            return Response(label="未知風險", score="未知", confidence_score=model_conf_score, reason=f"此訊息缺乏明確資訊，無法進行有效判斷，評估風險為未知")
         else:
             return Response(label="低風險", score=final_score, confidence_score=model_conf_score, 
                             reason=f"此訊息所含詐騙特徵較少{extra_reason}, 評估風險為低。")
