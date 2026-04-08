@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     REGEX_WEIGHT: float = 0.65
     MODEL_WEIGHT: float = 0.35
 
+    # 模型預測標籤門檻
+    HIGH_THRESHOLD: float = 0.5
+    MEDIUM_THRESHOLD: float = 0.6
+    UNKNOWN_THRESHOLD: float = 0.7
+
     # 硬體配置
     DEVICE: str = "cpu"
 
