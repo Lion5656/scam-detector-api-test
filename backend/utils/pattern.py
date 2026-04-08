@@ -13,7 +13,7 @@ SENSITIVE_RULE = re.compile(r"(身分證|密碼|帳號|銀行|信用卡|卡號|�
 GIFT_RULE = re.compile(r"(免費|免費LINE貼圖|中獎|抽獎|贈品|領取|免費領取|點我領|兌換|禮物卡|點數|Steam卡)")
 JOB_RULE = re.compile(r"(打工|兼職|在家工作|日領|週領|無經驗|免經驗|高薪|刷流水|刷單|打字員)")
 TIME_RULE = re.compile(r"\d+秒|\d+分|^\d{2}:\d{2}(\d{2})?$")
-DEBUNK_RULE = re.compile(r"反詐騙|警政署|165|手法|破解|手法分析|防範|提醒民眾|MyGoPen|cofacts|宣導")
+DEBUNK_RULE = re.compile(r"反詐騙|165|手法|破解|多問|多查|手法分析|防範|防詐|提醒民眾|MyGoPen|cofacts|宣導")
 
 RULES: List[Tuple[re.Pattern, int, str]] = [
     (MONEY_RULE, 30, "金錢及金錢交易相關誘導字詞"),
@@ -28,7 +28,7 @@ RULES: List[Tuple[re.Pattern, int, str]] = [
 ]
 
 # 建立模糊比對高風險詞
-FUZZY_KEYWORDS = ["保證獲利", "高報酬", "帳戶異常", "虛擬貨幣", "代操", "驗證碼", "會員指定任務", "抽獎機會", "賣便貨", "數量有限", "最後機會", "認證失敗", "點我領取", "限時搶購", "立即行動", "官方客服", "系統升級", "帳戶安全", "司法調查", "金管會公告"]
+FUZZY_KEYWORDS = ["保證獲利", "高報酬", "帳戶異常", "虛擬貨幣", "代操", "驗證碼", "中獎", "會員指定任務", "抽獎機會", "賣便貨", "數量有限", "最後機會", "認證失敗", "點我領取", "限時搶購", "立即行動", "官方客服", "系統升級", "帳戶安全", "司法調查", "金管會公告"]
 
 # 比對關鍵字
 def compare_rules(text: str) -> Tuple[int, str, List[str]]:

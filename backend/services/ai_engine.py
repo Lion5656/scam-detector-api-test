@@ -39,8 +39,6 @@ class InferenceEngine():
         model = ORTModelForSequenceClassification.from_pretrained(id, file_name="model_quantized.onnx", token=token, provider="CPUExecutionProvider")
         self.classifier = pipeline("text-classification", model=cast(Any, model), tokenizer=tokenizer, truncation=True, device=device)
         self.tokenizer = tokenizer
-        print(f"DEBUG - Type: {type(tokenizer)}")
-        print(f"DEBUG - Callable: {callable(tokenizer)}")
         print("模型載入完成")
 
     # 處理文本切分 + 預測
@@ -56,7 +54,7 @@ class InferenceEngine():
         # 如果最大長度 < 192，則直接預測
         if len(tokens) <= max_length:
             result = self.classifier(text, top_k=None) # 輸出是多層列表，取第一層 [[{"label": "HIGH", "score": 0.95}, ...]]
-            return self._evaluate(result[0]) # type: ignore
+            return self._evaluate(result) # type: ignore
         
         # 切分成多段 (滑動視窗)
         chucks = []
