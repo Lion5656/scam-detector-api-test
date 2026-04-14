@@ -1,13 +1,11 @@
 import os
 from typing import Any, Dict, List, Tuple, cast
 
-from fastapi import HTTPException
 from optimum.onnxruntime import ORTModelForSequenceClassification
 from transformers import (AutoTokenizer, Pipeline, PreTrainedTokenizerBase,
                           pipeline)
 
 from backend.config import settings
-from backend.schemas.analysis import Request, Response
 from backend.utils.pattern import compare_rules
 from backend.utils.text_cleaner import normalize_text
 
@@ -47,7 +45,6 @@ class InferenceEngine():
             raise RuntimeError("分詞器未載入")
         if self.classifier is None:
             raise RuntimeError("模型未載入")
-        
         
         tokens = self.tokenizer.encode(text, truncation=True, add_special_tokens=False)
 
@@ -109,12 +106,7 @@ class InferenceEngine():
         return "中等風險", dist.get("MEDIUM")
 
     # 正則模糊比對 + 模型預測
-    async def cascaded_detector(self, req: Request) -> Response:
-        text = req.text
-    
-        if not text:
-            raise HTTPException(status_code=400, detail="text不能為空白")
-        
+    async def cascaded_detector(self, text: str) -> Dict[str, Any]:
         # 分配權重
         w_model = settings.MODEL_WEIGHT
         w_rule = settings.REGEX_WEIGHT
@@ -136,17 +128,20 @@ class InferenceEngine():
 
         # 特別情境1. 如果模型判斷為未知風險且命中規則 = 0，判定未知
         if model_label == "未知風險" and len(rule_hit) == 0:
-            return Response(label="未知風險", score="未知", confidence_score=model_conf_score, reason="語句缺乏明確資訊，無法進行有效判斷，評估風險為未知")
+            return {"label": model_label, "score": "未知", "confidence_score": model_conf_score, "reason": "語句缺乏明確資訊，無法進行有效判斷，評估風險為未知"}
         # 特別情境2. 如過模型預測很正常 (低風險&信心分數 > 0.8 且 命中關鍵字 <= 2)，判定低風險
         if model_label == "低風險" and model_conf_score >= 0.8:
                 if len(rule_hit) <= 2:
-                    return Response(label="低風險", score=10.0, confidence_score=model_conf_score, reason=f"此訊息所含詐騙特徵較少{extra_reason}, 評估風險為低。")
+                    return {"label": "低風險", "score": 10.0, "confidence_score": model_conf_score, "reason": f"此訊息所含詐騙特徵較少{extra_reason}, 評估風險為低。"}
         # 特別情境3. 如過模型預測高風險且命中規則 >= 1，判定高風險
         if model_label == "高風險" and len(rule_hit) >= 1:
-            return Response(label="高風險", score=85.0, confidence_score=model_conf_score, reason=f"此訊息{rule_reason}, 評估風險為高")
+            return {"label": "高風險", "score": 85.0, "confidence_score": model_conf_score, "reason": f"此訊息{rule_reason}, 評估風險為高"}
         # 特別情境4. 如果比對規則命中 >= 5，直接判定為高風險
         if len(rule_hit) >= 5:
-            return Response(label="高風險", score=95.0, confidence_score=model_conf_score, reason=f"此訊息{rule_reason}, 評估風險為高")
+            return {"label": "高風險", "score": 95.0, "confidence_score": model_conf_score, "reason": f"此訊息{rule_reason}, 評估風險為高"}
+        # 特別情境5. 為正規銀行宣導文宣，直接判定為低風險
+        if rule_score == 20 and "銀行" in rule_reason:
+            return {"label": "低風險", "score": 20.0, "confidence_score": model_conf_score, "reason": f"此訊息{rule_reason}, 評估風險為低。"}
         
         # 規則基本分數
         rule_base = 20
@@ -163,23 +158,19 @@ class InferenceEngine():
         final_score = max(rule_score, (rule_base + rule_score) * w_rule + model_eval * w_model)
 
         if final_score >= 80:
-            return Response(label="高風險", score=final_score, confidence_score=model_conf_score, reason=f"此訊息{rule_reason}, 評估風險為高")
+            return {"label": "高風險", "score": final_score, "confidence_score": model_conf_score, "reason": f"此訊息{rule_reason}, 評估風險為高"}
         if final_score >= 40 and rule_reason:
-            return Response(label="中等風險", score=final_score, confidence_score=model_conf_score, reason=f"此訊息{rule_reason}, 評估風險為中等")
+            return {"label": "中等風險", "score": final_score, "confidence_score": model_conf_score, "reason": f"此訊息{rule_reason}, 評估風險為中等"}
         if final_score >= 40:
-            return Response(label="中等風險", score=final_score, confidence_score=model_conf_score, reason="此訊息疑似有詐騙風險，但特徵較模糊，評估風險為中等")
+            return {"label": "中等風險", "score": final_score, "confidence_score": model_conf_score, "reason": "此訊息疑似有詐騙風險，但特徵較模糊，評估風險為中等"}
         if model_eval < 0:
-            return Response(label="未知風險", score="未知", confidence_score=model_conf_score, reason=f"此訊息缺乏明確資訊，無法進行有效判斷，評估風險為未知")
+            return {"label": "未知風險", "score": "未知", "confidence_score": model_conf_score, "reason": f"此訊息缺乏明確資訊，無法進行有效判斷，評估風險為未知"}
         else:
-            return Response(label="低風險", score=final_score, confidence_score=model_conf_score, 
-                            reason=f"此訊息所含詐騙特徵較少{extra_reason}, 評估風險為低。")
+            return {"label": "低風險", "score": final_score, "confidence_score": model_conf_score, "reason": f"此訊息所含詐騙特徵較少{extra_reason}, 評估風險為低。"}
 
     # only模型預測
-    async def model_detector(self, req: Request) -> Response:
-        text = normalize_text(req.text)
-        if not text:
-            raise HTTPException(status_code=400, detail="text 不能為空白")
+    async def model_detector(self, text: str) -> Dict[str, Any]:
         label, conf_score =  self._predict_text(text)
-        return Response(label=label or "",  confidence_score=conf_score)
+        return { "label": label or "",  "confidence_score": conf_score}
     
 inference_engine = InferenceEngine()

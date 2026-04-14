@@ -3,16 +3,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from backend.routers import inference
-from backend.services.ai_engine import inference_engine
+from backend.services.text_analyzer import inference_engine
 
 
-# 主入口
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     inference_engine.load_model() # 載入模型
     yield
     print("清理資源...")
 
+# 主入口
 app = FastAPI(
     lifespan=lifespan,
     title="詐騙風險偵測模型API",

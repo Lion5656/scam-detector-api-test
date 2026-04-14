@@ -1,4 +1,3 @@
-# 請求的datamodel
 from pydantic import BaseModel, Field
 
 

@@ -3,7 +3,7 @@ from typing import List, Tuple
 
 from rapidfuzz import fuzz, process
 
-# 建立關鍵字比對規則
+# 建立詐騙關鍵字比對規則
 MONEY_RULE = re.compile(r"\$|\bUSD\b|TWD|NT|錢|元|金額|台幣|美金|人民幣|日圓|匯款|匯入|佣金|手續費|未繳清|未繳費|交易連結|交易鏈結|入.{0,3}帳|出.{0,3}金|付.{0,3}費|付.{0,3}款|付.{0,3}現|繳.{0,3}費|刷.{0,3}卡|退.{0,3}款|退.{0,3}費|轉.{0,3}帳")
 OTP_RULE = re.compile(r"OTP|驗證信|驗證碼|簡訊|動態密碼|授權碼|密碼|一次性密碼")
 URGENCY_RULE = re.compile(r"立即|馬上|立刻|趕快|限時|最後|逾期|否則|將停用|凍結|封鎖|24小時|今日截止|搶購|盡速前往")
@@ -13,9 +13,16 @@ SENSITIVE_RULE = re.compile(r"(身分證|密碼|帳號|銀行|信用卡|卡號|�
 GIFT_RULE = re.compile(r"(免費|免費LINE貼圖|中獎|抽獎|贈品|領取|免費領取|點我領|兌換|禮物卡|點數|Steam卡)")
 JOB_RULE = re.compile(r"(打工|兼職|在家工作|日領|週領|無經驗|免經驗|高薪|刷流水|刷單|打字員)")
 TIME_RULE = re.compile(r"\d+秒|\d+分|^\d{2}:\d{2}(\d{2})?$")
-DEBUNK_RULE = re.compile(r"反詐騙|165|手法|破解|多問|多查|手法分析|防範|防詐|提醒民眾|MyGoPen|cofacts|宣導")
 
-RULES: List[Tuple[re.Pattern, int, str]] = [
+# 反詐騙及真實銀行宣導用詞規避規則
+DEBUNK_RULE = re.compile(r"反詐騙|165|手法|破解|多問|多查|手法分析|防範|防詐|提醒民眾|MyGoPen|cofacts|宣導")
+APR_RULE = re.compile(r"年百分率(\s*\d{1,2}(\.\d{1,2})?%\s*\~\s*\d{1,2}(\.\d{1,2})?%)?|總費用年百分率(\s*\d{1,2}(\.\d{1,2})?%\s*\~\s*\d{1,2}(\.\d{1,2})?%)?|APR") 
+CACL_RULE = re.compile(r"試算|交易稅|機動計息|本息攤還|每月還款金額|每日還款金額|收入負債比")
+DISCLAIMER_RULE = re.compile(r"免責聲明|主管機關|保有核貸與否權利|審慎評估還款能力|實際貸款額度及利率|參閱|產品公開說明書")
+PERMISSION_RULE = re.compile(r"免(自行)?上傳(財力|證明)|應用金融科技|授權本行")
+
+
+SCAM_RULES: List[Tuple[re.Pattern, int, str]] = [
     (MONEY_RULE, 30, "金錢及金錢交易相關誘導字詞"),
     (OTP_RULE, 30, "OTP驗證碼等相關誘導字詞"),
     (URGENCY_RULE, 50, "有催促及急促語氣"),
@@ -27,19 +34,39 @@ RULES: List[Tuple[re.Pattern, int, str]] = [
     (TIME_RULE, 35, "時間指示操作相關指令用詞")
 ]
 
+BANK_RULES: List[Tuple[re.Pattern, str]] = [
+    (APR_RULE, "年百分率、總費用年百分率等相關用詞"),
+    (CACL_RULE, "試算款項等相關用詞"),
+    (DISCLAIMER_RULE, "免責聲明等相關用詞"),
+    (PERMISSION_RULE, "授權與免責等相關用詞")
+]
+
 # 建立模糊比對高風險詞
 FUZZY_KEYWORDS = ["保證獲利", "高報酬", "帳戶異常", "虛擬貨幣", "代操", "驗證碼", "中獎", "會員指定任務", "抽獎機會", "賣便貨", "數量有限", "最後機會", "認證失敗", "點我領取", "限時搶購", "立即行動", "官方客服", "系統升級", "帳戶安全", "司法調查", "金管會公告"]
 
 # 比對關鍵字
 def compare_rules(text: str) -> Tuple[int, str, List[str]]:
     # 規避反詐騙詞
-    is_debunk = bool(re.search(DEBUNK_RULE, text))
+    is_debunk = bool(len(re.findall(DEBUNK_RULE, text)) >= 2)
     if is_debunk:
         return 20, "，含反詐騙宣導用詞", []
-    
-    score = 0
+
     reason_list = []
+
+    match = 0
+    # 正則比對銀行宣導用詞，若規則命中兩次且每次命中數為兩個以上，則視為宣導文宣，給予較低分數
+    for pattern, reason in BANK_RULES:
+        counter = len(re.findall(pattern, text))
+        if counter >= 2:
+            match+=1
+            reason_list.append(reason)
+        if match == 2:
+            return 20, "含正規銀行所常用之" + "、".join(reason_list) if reason_list else "", []
+
+    score = 0
     hit_list = []
+    reason_list = [] # 重置reason_list
+    
     # RapidFuzz 模糊比對，比對關鍵字相似度 (是否為子集)
     for kw in FUZZY_KEYWORDS:
         similarity = fuzz.partial_ratio(kw, text)
@@ -50,7 +77,7 @@ def compare_rules(text: str) -> Tuple[int, str, List[str]]:
                 reason_list.append(f"{kw}")
                 
     # 正則比對
-    for pattern, point, sentence in RULES:
+    for pattern, point, sentence in SCAM_RULES:
         results = re.findall(pattern, text)
         if results:
             matches = min(len(results), 2) # 單一規則控制在最大分數 * 2 
@@ -59,6 +86,6 @@ def compare_rules(text: str) -> Tuple[int, str, List[str]]:
             hit_list.extend(results)
 
 
-    reason = "疑似包含" + ",".join(reason_list) if reason_list is not None else ""
+    reason = "疑似包含" + "、".join(reason_list) if reason_list is not None else ""
 
     return min(score, 100), reason, hit_list          
