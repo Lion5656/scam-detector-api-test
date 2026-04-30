@@ -29,8 +29,8 @@ class InferenceEngine():
 
     # 加載模型
     def load_model(self):
-        print("載入量化Bert ONNX推理模型...")
-        id = settings.HF_REPO_ID
+        print("載入量化文字推理模型...")
+        id = settings.HF_TEXT_REPO_ID
         device = settings.DEVICE
         token = os.getenv("HF_TOKEN")
         tokenizer = AutoTokenizer.from_pretrained(id, token=token)
@@ -44,7 +44,7 @@ class InferenceEngine():
         if self.tokenizer is None:
             raise RuntimeError("分詞器未載入")
         if self.classifier is None:
-            raise RuntimeError("模型未載入")
+            raise RuntimeError("文字模型未載入")
         
         tokens = self.tokenizer.encode(text, truncation=True, add_special_tokens=False)
 

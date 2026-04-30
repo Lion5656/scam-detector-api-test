@@ -4,11 +4,13 @@ from fastapi import FastAPI
 
 from backend.routers import text_inference, url_detection
 from backend.services.text_analyzer import inference_engine
+from backend.services.url_analyzer import detector
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     inference_engine.load_model() # 載入模型
+    detector.load_model()
     yield
     print("清理資源...")
 

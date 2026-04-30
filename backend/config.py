@@ -13,7 +13,8 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # huggingface repo id
-    HF_REPO_ID: str = "kko12/spam-detector-chinese"
+    HF_TEXT_REPO_ID: str = "kko12/spam-detector-chinese"
+    HF_URL_REPO_ID: str = "kko12/url-detector"
 
     # 文字推理權重分配
     REGEX_WEIGHT: float = 0.65
