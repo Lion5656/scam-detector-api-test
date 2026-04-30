@@ -7,11 +7,15 @@ requires-python = ">=3.14"
 dependencies = [
     "fastapi[standard]",
     "optimum[onnxruntime]>=1.16.0",
+    "pandas",
     "pydantic-settings>=2.13.1",
     "rapidfuzz>=3.14.5",
+    "scikit-learn>=1.8.0",
+    "tldextract",
     "torch",
     "transformers>=4.40.0",
     "uvicorn",
+    "xgboost",
 ]
 [tool.fastapi]
 entrypoint = "backend.main:app"

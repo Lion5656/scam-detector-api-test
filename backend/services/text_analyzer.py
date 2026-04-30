@@ -157,7 +157,7 @@ class InferenceEngine():
 
         final_score = max(rule_score, (rule_base + rule_score) * w_rule + model_eval * w_model)
 
-        if final_score >= 80:
+        if final_score >= 75:
             return {"label": "高風險", "score": final_score, "confidence_score": model_conf_score, "reason": f"此訊息{rule_reason}, 評估風險為高"}
         if final_score >= 40 and rule_reason:
             return {"label": "中等風險", "score": final_score, "confidence_score": model_conf_score, "reason": f"此訊息{rule_reason}, 評估風險為中等"}

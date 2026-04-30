@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from backend.routers import inference
+from backend.routers import text_inference, url_detection
 from backend.services.text_analyzer import inference_engine
 
 
@@ -17,11 +17,12 @@ app = FastAPI(
     lifespan=lifespan,
     title="詐騙風險偵測模型API",
     description="測試用API",
-    version="1.5.0"    
+    version="1.6.0"    
 )
 
 # 掛載router
-app.include_router(inference.router)
+app.include_router(text_inference.router)
+app.include_router(url_detection.router)
 
 @app.get("/")
 async def root():
