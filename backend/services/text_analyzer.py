@@ -128,20 +128,20 @@ class InferenceEngine():
 
         # 特別情境1. 如果模型判斷為未知風險且命中規則 = 0，判定未知
         if model_label == "未知風險" and len(rule_hit) == 0:
-            return {"label": model_label, "score": "未知", "confidence_score": model_conf_score, "reason": "語句缺乏明確資訊，無法進行有效判斷，評估風險為未知"}
+            return {"label": model_label, "score": "未知", "reason": "語句缺乏明確資訊，無法進行有效判斷，評估風險為未知"}
         # 特別情境2. 如過模型預測很正常 (低風險&信心分數 > 0.8 且 命中關鍵字 <= 2)，判定低風險
         if model_label == "低風險" and model_conf_score >= 0.8:
                 if len(rule_hit) <= 2:
-                    return {"label": "低風險", "score": 10.0, "confidence_score": model_conf_score, "reason": f"此訊息所含詐騙特徵較少{extra_reason}, 評估風險為低。"}
-        # 特別情境3. 如過模型預測高風險且命中規則 >= 1，判定高風險
-        if model_label == "高風險" and len(rule_hit) >= 1:
-            return {"label": "高風險", "score": 85.0, "confidence_score": model_conf_score, "reason": f"此訊息{rule_reason}, 評估風險為高"}
-        # 特別情境4. 如果比對規則命中 >= 5，直接判定為高風險
-        if len(rule_hit) >= 5:
-            return {"label": "高風險", "score": 95.0, "confidence_score": model_conf_score, "reason": f"此訊息{rule_reason}, 評估風險為高"}
-        # 特別情境5. 為正規銀行宣導文宣，直接判定為低風險
-        if rule_score == 20 and "銀行" in rule_reason:
-            return {"label": "低風險", "score": 20.0, "confidence_score": model_conf_score, "reason": f"此訊息{rule_reason}, 評估風險為低。"}
+                    return {"label": "低風險", "score": 10.0, "reason": f"此訊息所含詐騙特徵較少{extra_reason}, 評估風險為低。"}
+        # 特別情境3. 模型高風險且同時有足夠規則支持，才直接判高風險
+        if model_label == "高風險" and (rule_score >= 45 or len(rule_hit) >= 2):
+            return {"label": "高風險", "score": 85.0, "reason": f"此訊息{rule_reason}, 評估風險為高"}
+        # 特別情境4. 規則分數很高且信號類型夠多，直接判定為高風險
+        if rule_score >= 85 and len(rule_hit) >= 3:
+            return {"label": "高風險", "score": 95.0, "reason": f"此訊息{rule_reason}, 評估風險為高"}
+        # 特別情境5. 白名單或僅弱訊號詞，維持低風險
+        if rule_score <= 20 and len(rule_hit) <= 2:
+            return {"label": "低風險", "score": 20.0, "reason": f"此訊息所含詐騙特徵較少, 評估風險為低。"}
         
         # 規則基本分數
         rule_base = 20
@@ -155,22 +155,25 @@ class InferenceEngine():
         else:
             model_eval = -1  # 未知風險
 
-        final_score = max(rule_score, (rule_base + rule_score) * w_rule + model_eval * w_model)
+        final_score = (rule_base + rule_score) * w_rule + model_eval * w_model
+
+        if model_label == "低風險" and rule_score <= 28:
+            final_score = min(final_score, 30.0)
 
         if final_score >= 75:
-            return {"label": "高風險", "score": final_score, "confidence_score": model_conf_score, "reason": f"此訊息{rule_reason}, 評估風險為高"}
+            return {"label": "高風險", "score": final_score, "reason": f"此訊息{rule_reason}, 評估風險為高"}
         if final_score >= 40 and rule_reason:
-            return {"label": "中等風險", "score": final_score, "confidence_score": model_conf_score, "reason": f"此訊息{rule_reason}, 評估風險為中等"}
+            return {"label": "中等風險", "score": final_score, "reason": f"此訊息{rule_reason}, 評估風險為中等"}
         if final_score >= 40:
-            return {"label": "中等風險", "score": final_score, "confidence_score": model_conf_score, "reason": "此訊息疑似有詐騙風險，但特徵較模糊，評估風險為中等"}
+            return {"label": "中等風險", "score": final_score, "reason": "此訊息疑似有詐騙風險，但特徵較模糊，評估風險為中等"}
         if model_eval < 0:
-            return {"label": "未知風險", "score": "未知", "confidence_score": model_conf_score, "reason": f"此訊息缺乏明確資訊，無法進行有效判斷，評估風險為未知"}
+            return {"label": "未知風險", "score": "未知", "reason": f"此訊息缺乏明確資訊，無法進行有效判斷，評估風險為未知"}
         else:
-            return {"label": "低風險", "score": final_score, "confidence_score": model_conf_score, "reason": f"此訊息所含詐騙特徵較少{extra_reason}, 評估風險為低。"}
+            return {"label": "低風險", "score": final_score, "reason": f"此訊息所含詐騙特徵較少{extra_reason}, 評估風險為低。"}
 
     # only模型預測
     async def model_detector(self, text: str) -> Dict[str, Any]:
         label, conf_score =  self._predict_text(text)
-        return { "label": label or "",  "confidence_score": conf_score}
+        return {"label": label or ""}
     
 inference_engine = InferenceEngine()

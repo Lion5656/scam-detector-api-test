@@ -12,5 +12,4 @@ class URLRequest(BaseModel):
 class Response(BaseModel):
     label: str
     score: str | float | None = None
-    confidence_score: float | None = None
     reason: str | None = None

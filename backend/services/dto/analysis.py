@@ -7,5 +7,4 @@ class AnalysisInput(BaseModel):
 class AnalysisResult(BaseModel):
     label: str
     score: str | float | None = None
-    confidence_score: float | None = None
     reason: str | None = None

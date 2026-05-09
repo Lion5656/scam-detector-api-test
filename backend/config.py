@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     HF_URL_REPO_ID: str = "kko12/url-detector"
 
     # 文字推理權重分配
-    REGEX_WEIGHT: float = 0.65
-    MODEL_WEIGHT: float = 0.35
+    REGEX_WEIGHT: float = 0.45
+    MODEL_WEIGHT: float = 0.55
 
     # 文字預測標籤門檻
     HIGH_THRESHOLD: float = 0.5
