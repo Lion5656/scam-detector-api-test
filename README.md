@@ -7,14 +7,23 @@ sdk: docker
 pinned: false
 ---
 
-### 這是一個基於FastAPI和 XgBoost、Bert + llama3.2量化模型 + 決策型RAG 的詐騙偵測API的測試環境
+### 基於 FastAPI 的多模型詐騙偵測 API 測試環境
+
+整合文字詐騙分類、URL 詐騙偵測與 RAG 推理流程，提供模組化的詐騙分析能力。
+
+#### 使用核心模型
+
+- bert：負責文字詐騙分類推理
+- XGBoost：負責 URL 詐騙網址偵測
+- nomic-embed-text：負責 RAG 文本向量化
+- llama 3.2:3b Q5：負責 RAG 語意推理與分析
 
 ### 📂 專案結構說明
 ```text
 scam-detection-project/
 │
 ├─ backend/
-│  ├─ main.py                           # FastAPI 入口與 lifespan 設定
+│  ├─ main.py                           # FastAPI 入口
 │  ├─ config.py                         # 專案設定與環境變數
 │  │
 │  ├─ db/
@@ -79,61 +88,92 @@ scam-detection-project/
 
 ### 首次啟動專案
 
-若您首次下載本專案或更換電腦，請按照以下步驟初始化環境：
+若您首次下載本專案或更換開發環境，請依照以下步驟初始化：
 
-#### 1. 同步依賴
+### 1. 安裝專案依賴
 
-在專案根目錄執行：
+於專案根目錄執行：
 
 ```powershell
 uv sync
 ```
 
-這會根據 `pyproject.toml` 安裝所有必要的 Python 依賴，並設置虛擬環境。
+此指令會根據 `pyproject.toml` 安裝所需依賴並建立虛擬環境。
 
-#### 2. 啟動 Ollama 服務
+---
 
-確保 Ollama 服務已啟動（用於 Embedding 生成）：
+### 2. 啟動 Ollama 服務
 
-```powershell
-ollama serve
-```
-
-預設使用的 embedding model 為 `nomic-embed-text`，可在 `backend/config.py` 中修改 `OLLAMA_EMBED_MODEL` 設定。
-
-#### 3. 構建 ChromaDB 向量資料庫
-
-在新的終端執行（確保虛擬環境已啟動）：
-
-```powershell
-uv run python scripts/ingest_data.py
-```
-
-**執行前請確認：**
-- `data/raw/scam-dataset.json` 已存在
-- Ollama 服務已啟動（步驟 2）
-- 所需的 embedding model 已下載
-
-執行後會在 `data/chroma/` 生成向量資料庫。
-
-### 後續啟動專案
-
-若環境已設置完成，後續啟動只需：
-
-#### 1. 啟動 Ollama（若未運行）
+本專案使用 Ollama 提供 embedding 模型服務。
 
 ```powershell
 ollama serve
 ```
 
-#### 2. 啟動 FastAPI 開發伺服器
+預設 embedding model 為 `nomic-embed-text`，可於 `backend/config.py` 修改：
 
-在新的終端執行：
+```python
+OLLAMA_EMBED_MODEL
+```
+
+---
+
+### 3. 建立 ChromaDB 向量資料庫
+
+執行前請確認：
+
+- 已匯入 `dataset`
+- Ollama 服務已啟動
+- 已下載所需 embedding model
+
+接著執行向量建庫腳本：
+
+```powershell
+python scripts/build_vector_db.py
+```
+
+完成後會於：
+
+```text
+data/chroma/
+```
+
+生成 ChromaDB 向量資料庫。
+
+---
+
+## 後續啟動專案
+
+若環境已初始化完成，後續啟動僅需：
+
+### 1. 啟動 Ollama
+
+```powershell
+ollama serve
+```
+
+### 2. 啟動 FastAPI 開發伺服器
 
 ```powershell
 uv run python -m uvicorn backend.main:app --reload
 ```
 
-應用會在 `http://localhost:8000` 運行。
-- API 文檔：`http://localhost:8000/docs`
-- 測試資訊：查看 `test.py` 中的測試案例
+---
+
+## Deployment
+
+本專案使用 Hugging Face Spaces Docker 模式部署。
+
+### 環境資訊
+
+- SDK：docker
+- Base Image：python:3.10-slim
+- Local Dependency Management：uv + pyproject.toml
+- Docker Dependency Installation：requirements.txt
+- Exposed Port：7860
+
+### FastAPI 啟動 Port
+
+```text
+0.0.0.0:7860
+```
