@@ -5,38 +5,42 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent
+ROOT_DIR = BASE_DIR.parent
 
 
 class Settings(BaseSettings):
-    # 基本專案資訊
     APP_NAME: str = "Scam detetcor"
     DEBUG: bool = True
 
-    # huggingface repo id
     HF_TEXT_REPO_ID: str = "kko12/spam-detector-chinese"
     HF_URL_REPO_ID: str = "kko12/url-detector"
 
-    # 文字推理權重分配
-    REGEX_WEIGHT: float = 0.45
-    MODEL_WEIGHT: float = 0.55
+    REGEX_WEIGHT: float = 0.55
+    MODEL_WEIGHT: float = 0.45
 
-    # 文字預測標籤門檻
     HIGH_THRESHOLD: float = 0.5
     MEDIUM_THRESHOLD: float = 0.6
     UNKNOWN_THRESHOLD: float = 0.7
 
-    # 硬體配置
     DEVICE: str = "cpu"
-
-    # 模型路徑設定 (使用Path處理跨平台路徑問題)
-    # Path(__file__).resolve() 取得當前檔案的絕對路徑，parent取得檔案所在的目錄(上一層) 
     BASE_MODEL_PATH: str = str(BASE_DIR / "models")
 
-    # 載入專案環境變數
+    CHUNCK_SIZE: int = 500
+    CHUNCK_OVERLAP: int = 50
+
+    RAG_ENABLED: bool = True
+    RAG_TOP_K: int = 3
+    RAG_RECORD_LIMIT: int = 2000
+    RAG_DATASET_PATH: str = str(ROOT_DIR / "data" / "raw" / "scam-dataset.json")
+    RAG_PERSIST_DIR: str = str(ROOT_DIR / "data" / "chroma")
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_LLM_MODEL: str = "scam-detector-llama"
+    OLLAMA_EMBED_MODEL: str = "nomic-embed-text"
+
     model_config = SettingsConfigDict(
         env_file=os.path.join(BASE_DIR, ".env"),
         extra="ignore",
     )
 
-# 實例化全域使用
+
 settings = Settings()

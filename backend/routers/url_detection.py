@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from backend.config import settings
 from backend.schemas.analysis import Response, URLRequest
-from backend.services.url_analyzer import detector
+from backend.services.url_service.url_analyzer import detector
 
 router = APIRouter(prefix="/v1", tags=["url-detector"])
 
@@ -16,6 +16,6 @@ async def analyze_url(req: URLRequest) -> Response:
         return Response(**result)
     except Exception as e:
         if settings.DEBUG:
-            raise HTTPException(status_code=500, detail={e})
+            raise HTTPException(status_code=500, detail=str(e))
         raise HTTPException(status_code=500, detail="Internal Error")
     

@@ -1,7 +1,9 @@
 import os
 from typing import Dict
+
 import joblib
 from huggingface_hub import hf_hub_download
+
 from backend.config import settings
 from backend.utils import features
 
@@ -27,11 +29,12 @@ class Detector():
             raise RuntimeError('url模型未載入')
 
         feat = features.process_url_features(url)
-        prob = self.classifier.predict_proba(feat)[0][1]
+        prob = float(self.classifier.predict_proba(feat)[0][1])
+        score = round(prob, 2)
         print(prob)
         if prob >= 0.55:
-            return {"label": "高風險", "score": f"{prob:.2f}"}
+            return {"label": "高風險", "score": score}
         else:
-            return {"label": "低風險", "score": f"{prob:.2f}"}
+            return {"label": "低風險", "score": score}
 
 detector = Detector()

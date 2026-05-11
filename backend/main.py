@@ -3,13 +3,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from backend.routers import text_inference, url_detection
-from backend.services.text_analyzer import inference_engine
-from backend.services.url_analyzer import detector
+from backend.services.text_service.transformer_classifier import transformer_classifier
+from backend.services.url_service.url_analyzer import detector
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    inference_engine.load_model() # 載入模型
+    transformer_classifier.load_model()  # 載入 Transformer 模型
     detector.load_model()
     yield
     print("清理資源...")
@@ -19,7 +19,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="詐騙風險偵測模型API",
     description="測試用API",
-    version="1.6.0"    
+    version="2.0.0"    
 )
 
 # 掛載router
