@@ -23,23 +23,13 @@ def get_llm() -> Any:
 def build_rag_chain() -> Any:
     ChatPromptTemplate, RunnablePassthrough, _ = _require_langchain()
     template = """
-相似案例：
+已知風險特徵（僅供參考，禁止類比推理）
 {context}
 
 待分析訊息：
 {question}
 
-注意交易命令相關操作，是否包含詐騙中的「資金流向合理化」話術。
-若訊息同時出現第三方帳戶、隱蔽交易、借名操作與機構化包裝等特徵，請提高詐騙風險。
-請先列出訊息中的 3 個可疑點，接著對照檢索到的案例，最後才給出詐騙風險評分，理由要符合評分等級
-嚴格只輸出單一 JSON 物件，不要加入前言、markdown、程式碼區塊或其他欄位。
-
-輸出格式：
-{{
-  "label": "(風險等級: 低風險、中等風險、高風險)",
-  "score": (分數: 0-100 的數字，低風險40分以下，中風險80分以下，高風險80分以上) ,
-  "reason": "原因: 2-3 句簡短理由"
-}}
+你只需要判斷【待分析訊息】，context 僅作為輔助證據。
 """
     prompt = ChatPromptTemplate.from_template(template)
     retriever = get_retriever()
