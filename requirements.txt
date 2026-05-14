@@ -14,6 +14,7 @@ tokenizers
 langchain-chroma
 langchain-core
 langchain-ollama
+langchain-groq
 langchain-text-splitters
 
 # 基礎工具

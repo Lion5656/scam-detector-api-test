@@ -131,7 +131,7 @@ class TransformerClassifier:
             "label": final_label,
             "confidence": final_confidence,
             "margin": final_margin,
-            "chunk_consistent": len(set(chunk_labels)) <= 1,
+            "chunk_consistent": len(set(chunk_labels)) <= 2,
         }
 
 

@@ -1,39 +1,82 @@
 import json
 import re
-from typing import Any, cast
+import os
+from typing import Any
 
 from backend.config import settings
-from backend.services.dto.analysis import RagEvidence
+from backend.services.dto.analysis import RagEvidence, RagResponse
 from backend.services.ingestion.rag_retriever import format_context, get_retriever, is_rag_ready, normalize_query_text
+from backend.utils.text_cleaner import normalize_escape_sequences
 
 
-def _require_langchain() -> tuple[Any, Any, Any]:
+
+def _require_langchain() -> tuple[Any, Any, Any, Any]:
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.runnables import RunnablePassthrough
-    from langchain_ollama import OllamaLLM
+    from langchain_core.output_parsers import JsonOutputParser
+    from langchain_groq import ChatGroq
 
-    return ChatPromptTemplate, RunnablePassthrough, OllamaLLM
+    return ChatPromptTemplate, RunnablePassthrough, JsonOutputParser, ChatGroq
 
 
-def get_llm() -> Any:
-    _, _, OllamaLLM = _require_langchain()
-    return OllamaLLM(model=settings.OLLAMA_LLM_MODEL, base_url=settings.OLLAMA_BASE_URL, temperature=0)
+def _get_prompt() -> Any:
+    ChatPromptTemplate, _, _, _ = _require_langchain()
 
+    template = """
+    <think>
+    你是一個防詐專家，擅長從文字上下文中找出詐騙風險，
+    分析待分析訊息，考慮是否為詐騙，
+    請先在內部完成風險分析，
+    不要直接下結論輸出。
+    </think>
+
+    最終請 JSON 結果。
+
+    注意：
+    1. reason 輸出禁止直接引用 context 原句，需要說明如何分析
+    2. 風險越高分數請給越高，分數要跟風險成正比
+    以下是風險類型定義：
+    {context}\n
+
+    待分析訊息(禁止引用)：
+    {question}\n
+
+    必須輸出繁體中文，且不要輸出引號：
+    \n
+    輸出訊息： 請嚴格按照以下 JSON schema 輸出：
+    {format_instructions}
+    """
+
+    parser = _get_parser()
+    prompt = ChatPromptTemplate.from_template(
+        template, 
+        partial_variables={"format_instructions": parser.get_format_instructions()}
+    )
+    return prompt
+
+def _get_llm() -> Any:
+    _, _, _, ChatGroq = _require_langchain()
+    api_key = settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY")
+    return ChatGroq(
+        model_name=settings.RAG_MODEL_NAME, 
+        temperature = 0.1,
+        api_key=api_key,
+        
+    )
+
+
+def _get_parser() -> Any:
+    _, _, JsonOutputParser, _  = _require_langchain()
+    parser = JsonOutputParser(pydantic_object=RagResponse)
+    return parser
 
 def build_rag_chain() -> Any:
-    ChatPromptTemplate, RunnablePassthrough, _ = _require_langchain()
-    template = """
-已知風險特徵（僅供參考，禁止類比推理）
-{context}
+    _, RunnablePassthrough, _, _ = _require_langchain()
 
-待分析訊息：
-{question}
-
-你只需要判斷【待分析訊息】，context 僅作為輔助證據。
-"""
-    prompt = ChatPromptTemplate.from_template(template)
+    prompt = _get_prompt()
     retriever = get_retriever()
-    llm = get_llm()
+    llm = _get_llm()
+    parser = _get_parser()
 
     return (
         {
@@ -42,37 +85,45 @@ def build_rag_chain() -> Any:
         }
         | prompt
         | llm
+        | parser
     )
 
 
-def clean_response(text: str) -> str:
-    text = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE)
-    return text.strip()
-
-
-def extract_reason_from_response(text: str) -> str:
-    match = re.search(r"原因[：:]\s*(.+)$", text, flags=re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return text.strip()
-
-
-def parse_structured_response(text: str) -> tuple[str, float | None, str]:
+def _to_float(v: Any) -> float:
+    """安全轉換任意值為浮點數，預設為 0.0"""
     try:
-        payload = json.loads(text)
-        if isinstance(payload, dict):
-            label = str(payload.get("label") or "未知風險")
-            raw_score = payload.get("score")
-            score = float(raw_score) if raw_score is not None else None
-            reason = str(payload.get("reason") or "").strip()
-            return label, score, reason or text.strip()
-    except (json.JSONDecodeError, TypeError, ValueError):
-        pass
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
 
-    label = infer_label_from_response(text)
-    score = infer_score_from_response(text)
-    reason = extract_reason_from_response(text)
+
+
+
+def parse_structured_response(text: str) -> tuple[str, float, str]:
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        return "回傳錯誤", -1, ""
+    money = _to_float(payload.get("money_related"))
+    urgency = _to_float(payload.get("urgency"))
+    bating = _to_float(payload.get("bating"))
+    personal_info = _to_float(payload.get("asks_for_personal_info"))
+    reputation = _to_float(payload.get("reputation"))
+    
+    score = min((money * 0.25 + 
+                urgency * 0.30 + 
+                bating * 0.25 + 
+                personal_info * 0.25 +
+                reputation * 0.30) * 100, 100)
+    
+    score = max(score, 5)
+    reason = normalize_escape_sequences(str(payload.get("reason") or ""))
+    
+    label = "低風險"
+    if score >= 80:
+        label = "高風險"
+    elif score >= 40:
+        label = "中等風險"
+    
     return label, score, reason
 
 
@@ -81,7 +132,11 @@ def analyze_with_rag(message: str) -> RagEvidence:
         return RagEvidence(used=False)
 
     rag_chain = build_rag_chain()
-    raw_response = clean_response(cast(str, rag_chain.invoke(message)))
+    chain_output = rag_chain.invoke(message)
+    if isinstance(chain_output, dict):
+        raw_response = json.dumps(chain_output, ensure_ascii=False)
+    else:
+        raw_response = chain_output
     label, score, reason = parse_structured_response(raw_response)
 
     return RagEvidence(
@@ -91,26 +146,3 @@ def analyze_with_rag(message: str) -> RagEvidence:
         reason=reason,
         raw_response=raw_response,
     )
-
-
-def infer_label_from_response(text: str) -> str:
-    if "高風險" in text:
-        return "高風險"
-    if "中等風險" in text:
-        return "中等風險"
-    if "低風險" in text:
-        return "低風險"
-    return "未知風險"
-
-
-def infer_score_from_response(text: str) -> float | None:
-    match = re.search(r"(?:風險分數|分數)[：: ]*(\d+(?:\.\d+)?)", text)
-    if match:
-        return float(match.group(1))
-
-    match = re.search(r"\b(100|[1-9]?\d(?:\.\d+)?)\b", text)
-    if match:
-        value = float(match.group(1))
-        if 0 <= value <= 100:
-            return value
-    return None

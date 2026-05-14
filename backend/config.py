@@ -28,15 +28,16 @@ class Settings(BaseSettings):
     CHUNCK_SIZE: int = 500
     CHUNCK_OVERLAP: int = 50
 
+    RAG_MODEL_NAME: str = "llama-3.1-8b-instant"
     RAG_ENABLED: bool = True
     RAG_TOP_K: int = 3
     RAG_RECORD_LIMIT: int = 2000
     RAG_DATASET_PATH: str = str(ROOT_DIR / "data" / "raw" / "scam-dataset.json")
     RAG_PERSIST_DIR: str = str(ROOT_DIR / "data" / "chroma")
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_LLM_MODEL: str = "scam-detector-llama"
     OLLAMA_EMBED_MODEL: str = "nomic-embed-text"
 
+    GROQ_API_KEY: str = ""
     model_config = SettingsConfigDict(
         env_file=os.path.join(BASE_DIR, ".env"),
         extra="ignore",

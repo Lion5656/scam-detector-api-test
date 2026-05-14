@@ -7,7 +7,7 @@ from backend.utils.text_cleaner import normalize_text
 
 def _require_langchain() -> tuple[Any, Any]:
     from langchain_chroma import Chroma
-    from langchain_ollama import OllamaEmbeddings
+    from langchain_community.embeddings import OllamaEmbeddings
 
     return Chroma, OllamaEmbeddings
 

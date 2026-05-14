@@ -8,7 +8,7 @@ from backend.utils.text_cleaner import normalize_text
 router = APIRouter(prefix="/v1", tags=["text-inference"])
 
 
-@router.post("/analyze/text/hybrid", response_model=Response, summary="文字詐騙風險分析", description="使用規則、模型與條件式 RAG 做混合判斷")
+@router.post("/analyze/text/hybrid", response_model=Response, summary="文字詐騙風險分析", description="使用規則、多模型做混合判斷")
 async def analyze_text(req: TextRequest) -> Response:
     try:
         text = normalize_text(req.text)

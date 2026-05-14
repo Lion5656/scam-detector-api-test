@@ -1,5 +1,5 @@
 ---
-title: Spam Detector API
+title: Scam Detector API
 emoji: 🚫
 colorFrom: blue
 colorTo: red
@@ -16,7 +16,7 @@ pinned: false
 - bert：負責文字詐騙分類推理
 - XGBoost：負責 URL 詐騙網址偵測
 - nomic-embed-text：負責 RAG 文本向量化
-- llama 3.2:3b Q5：負責 RAG 語意推理與分析
+- llama 3.1:8b-instant：負責 RAG 語意推理與分析
 
 ### 📂 專案結構說明
 ```text

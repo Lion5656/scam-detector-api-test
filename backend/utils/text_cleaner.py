@@ -9,3 +9,9 @@ def normalize_text(text: str) -> str:
     # 清掉多餘的特殊字符
     text = re.sub(r"[－+\-*.]+", "", text)
     return text
+
+
+
+def normalize_escape_sequences(text: str) -> str:
+    text = text.replace('\\"', '"').replace("\\r", " ").replace("\\n", " ").replace("\\t", " ")
+    return text.strip()
