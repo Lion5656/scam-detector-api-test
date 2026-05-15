@@ -3,30 +3,19 @@ from typing import Any
 
 from backend.config import settings
 from backend.utils.text_cleaner import normalize_text
+from backend.rag.rag_context import RAGContext
 
 
-def _require_langchain() -> tuple[Any, Any]:
-    from langchain_chroma import Chroma
-    from langchain_community.embeddings import OllamaEmbeddings
-
-    return Chroma, OllamaEmbeddings
-
-
-def get_embeddings() -> Any:
-    _, OllamaEmbeddings = _require_langchain()
-    return OllamaEmbeddings(model=settings.OLLAMA_EMBED_MODEL, base_url=settings.OLLAMA_BASE_URL)
-
-
-def get_vectorstore() -> Any:
-    Chroma, _ = _require_langchain()
-    return Chroma(
-        persist_directory=settings.RAG_PERSIST_DIR,
-        embedding_function=get_embeddings(),
-    )
+def _get_vectorstore() -> Any:
+    try:
+        return RAGContext.get_vectorstore()
+    except RuntimeError as e:
+        print(f"取得 vectorstore 失敗: {e}")
+        raise
 
 
 def get_retriever() -> Any:
-    vectorstore = get_vectorstore()
+    vectorstore = _get_vectorstore()
     return vectorstore.as_retriever(search_kwargs={"k": settings.RAG_TOP_K})
 
 

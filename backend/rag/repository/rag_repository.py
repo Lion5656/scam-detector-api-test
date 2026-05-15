@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.config import settings
-from backend.services.ingestion.rag_retriever import get_embeddings
+from backend.rag.rag_context import RAGContext
 
 
 def _require_langchain() -> tuple[Any]:
@@ -16,7 +16,7 @@ def get_vectorstore() -> Any:
     (Chroma,) = _require_langchain()
     return Chroma(
         persist_directory=settings.RAG_PERSIST_DIR,
-        embedding_function=get_embeddings(),
+        embedding_function=RAGContext.get_embeddings(),
     )
 
 

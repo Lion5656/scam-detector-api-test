@@ -1,6 +1,6 @@
 from typing import Any
 
-from backend.services.dto.analysis import RagEvidence
+from backend.rag.dto.analysis import RagEvidence
 
 
 class FusionService:

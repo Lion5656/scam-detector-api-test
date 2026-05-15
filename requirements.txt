@@ -13,9 +13,9 @@ tokenizers
 # RAG / LLM
 langchain-chroma
 langchain-core
-langchain-ollama
 langchain-groq
 langchain-text-splitters
+langchain-huggingface
 
 # 基礎工具
 numpy

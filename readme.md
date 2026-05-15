@@ -15,122 +15,212 @@ pinned: false
 
 - bert：負責文字詐騙分類推理
 - XGBoost：負責 URL 詐騙網址偵測
-- nomic-embed-text：負責 RAG 文本向量化
+- BAAI/bge-small-zh-v1.5：負責 RAG 文本向量化
 - llama 3.1:8b-instant：負責 RAG 語意推理與分析
 
 ### 📂 專案結構說明
 ```text
 scam-detection-project/
 │
-├─ backend/
-│  ├─ main.py                           # FastAPI 入口
-│  ├─ config.py                         # 專案設定與環境變數
-│  │
-│  ├─ db/
-│  │  ├─ chroma.py                      # ChromaDB 初始化入口
-│  │  └─ rebuild.py                     # 向量庫建立與索引重建
-│  │
-│  ├─ repository/                       # 資料存取層 (CRUD)
-│  │  └─ rag_repository.py              # 向量庫查詢、新增、刪除等操作(保留擴充web search)
+├─ backend/                             # 後端主程式
+│  ├─ __init__.py
+│  ├─ main.py                           # FastAPI 應用入口 & 生命週期管理
+│  ├─ config.py                         # 環境變數與全局設定
 │  │ 
-│  ├─ routers/                          # API 路由層
-│  │  ├─ text_inference.py              # 文字檢測 API
-│  │  └─ url_detection.py               # URL 檢測 API
+│  ├─ routers/                          # 🛣️ API 路由層
+│  │  ├─ __init__.py
+│  │  ├─ text_inference.py             
+│  │  └─ url_detection.py              
 │  │ 
-│  ├─ schemas/                          # 對外請求 / 回應模型
-│  │  └─ analysis.py
+│  ├─ schemas/                          # 📋 API 資料模型
+│  │  ├─ __init__.py
+│  │  └─ analysis.py                    # Pydantic 請求/回應定義
 │  │
-│  ├─ services/                         # 業務邏輯層
-│  │  ├─ dto/                           # 服務間共享資料模型
+│  ├─ services/                         # ⚙️ 業務邏輯層
+│  │  ├─ __init__.py
+│  │  │
+│  │  ├─ dto/                           # 服務間通信模型
+│  │  │  ├─ __init__.py
 │  │  │  └─ analysis.py
 │  │  │
-│  │  ├─ ingestion/                     # 資料攝取與向量化層
-│  │  │  └─ rag_retriever.py            # 向量庫檢索、context 組裝與 embedding
+│  │  ├─ text_service/                  # 📝 文字詐騙分析流程
+│  │  │  ├─ __init__.py
+│  │  │  ├─ text_analyzer.py            # [協調層] 功能編排 & 決策路由
+│  │  │  ├─ transformer_classifier.py   # [推理層] BERT 模型加載 & 預測
+│  │  │  ├─ confidence_router.py        # [決策層] 信心度評估 & RAG 判定
+│  │  │  ├─ rag_reasoner.py             # [推理層] LLM 深度分析 & 結果解析
+│  │  │  └─ fusion_service.py           # [融合層] 多源結果加權融合
 │  │  │
-│  │  ├─ text_service/                  # 文字詐騙分析流程
-│  │  │  ├─ text_analyzer.py            # 協調層 - 功能編排與決策路由 (Orchestration)
-│  │  │  ├─ transformer_classifier.py   # Transformer 模型加載與推理服務
-│  │  │  ├─ confidence_router.py        # decision-logic -> LLM or RAG
-│  │  │  ├─ rag_reasoner.py             # 呼叫 LLM 並解析 RAG 結果
-│  │  │  └─ fusion_service.py           # 基礎規則、模型與 RAG 結果融合
-│  │  │
-│  │  └─ url_service/                   # URL 詐騙分析流程
-│  │     └─ url_analyzer.py             # URL 特徵與分類推論
-│  └─ utils/                            # 共用工具函式
-│     ├─ features.py                    # URL 特徵工程
-│     ├─ pattern.py                     # 關鍵詞 / 規則比對
-│     └─ text_cleaner.py                # 文字前處理
-├─ data/
-│  ├─ chroma/                           # 向量資料庫輸出目錄
-│  └─ raw/
-│     └─ scam-dataset.json              # RAG 預設資料集位置
-├─ scripts/
-│  └─ ingest_data.py                    # 建立 ChromaDB 的執行入口
-├─ backend/models/                      # 模型檔案（文字分類與 URL 分類）
+│  │  └─ url_service/                   # 🌐 URL 詐騙分析流程
+│  │     ├─ __init__.py
+│  │     └─ url_analyzer.py             # 特徵工程 & XGBoost 推理
+│  │
+│  ├─ rag/                              # 🧠 RAG 模組
+│  │  ├─ __init__.py
+│  │  ├─ rag_context.py                 # RAG 全局上下文 & 狀態管理
+│  │  ├─ rag_retriever.py               # 向量檢索 & Context 組裝
+│  │  ├─ rag_reasoner.py                # LLM 推理與結果解析
+│  │  ├─ dto/
+│  │  │  ├─ __init__.py
+│  │  │  └─ analysis.py
+│  │  └─ repository/
+│  │     ├─ __init__.py
+│  │     └─ rag_repository.py
+│  │
+│  └─ utils/                            # 🔧 工具函式庫
+│     ├─ __init__.py
+│     ├─ features.py                    # URL 特徵工程 (30+ 維度)
+│     ├─ pattern.py                     # 關鍵詞匹配 & 正則規則
+│     └─ text_cleaner.py                # 文字前處理 & 標準化
 ```
 
-目前專案架構依據功能邊界設計，採分層式的協調模式：
+**📋 分層說明：**
+- **API 層**：FastAPI 應用管理
+- **路由層**：HTTP 端點定義
+- **業務邏輯層**：核心分析引擎 (協調/推理/決策/融合)
+- **資料存取層**：向量庫 CRUD 操作
+- **RAG 模組**：知識庫檢索與 LLM 推理
+- **工具庫**：特徵工程與文字處理
 
-- **db** 層：ChromaDB 初始化與索引重建
-- **repository** 層：向量庫的 CRUD 操作（查詢、新增、刪除）
-- **ingestion** 層：資料攝取、embedding 與向量庫檢索
-- **text_service** 層：
-  - **text_analyzer** (Orchestration)：功能編排與決策路由
-  - **transformer_classifier**：Transformer 模型加載與推理
-  - **confidence_router**：決策邏輯（是否使用 LLM/RAG）
-  - **rag_reasoner**：調用 LLM 並解析 RAG 結果
-  - **fusion_service**：融合多種方案的分析結果
-- **url_service** 層：URL 特徵與分類推論
-- **routers** 層：API 路由與請求處理
+## 快速開始
 
-
-## 開發環境設定
-
-### 首次啟動專案
-
-若您首次下載本專案或更換開發環境，請依照以下步驟初始化：
+### 環境需求
+- Python 3.14+
+- pip 或 uv 套件管理工具
 
 ### 1. 安裝專案依賴
 
 於專案根目錄執行：
 
-```powershell
+```bash
+# 使用 uv（推薦）
 uv sync
+
+# 或使用 pip
+pip install -r requirements.txt
 ```
 
-此指令會根據 `pyproject.toml` 安裝所需依賴並建立虛擬環境。
+### 2. 環境變數設定
+
+在專案根目錄建立 `.env` 檔案：
+
+```env
+# FastAPI 伺服器設定
+ENVIRONMENT=development
+
+# RAG 模型設定
+EMBED_MODEL=BAAI/bge-small-zh-v1.5
+RAG_PERSIST_DIR=data/chroma
+
+# LLM API 設定
+GROQ_API_KEY=your_groq_api_key  # 可選，若使用 Groq LLM
+```
+
+### 3. 初始化向量資料庫
+
+若為首次使用，執行以下指令建立 ChromaDB：
+
+```bash
+python backend/db/rebuild.py
+```
+
+### 4. 啟動服務
+
+```bash
+# 開發模式
+uv run fastapi dev
+
+# 生產模式
+uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
+服務將於 `http://localhost:8000` 啟動，API 文件請瀏覽 `http://localhost:8000/docs`
 
 ---
 
-### 2. 啟動 Ollama 服務
+## 系統架構
 
-本專案使用 Ollama 提供 embedding 模型服務。
+### 模型與技術棧
 
-```powershell
-ollama serve
+| 組件 | 用途 | 技術 |
+|------|------|------|
+| 文字分類 | 詐騙文本檢測 | BERT (ONNX 量化) |
+| URL 分類 | 惡意 URL 檢測 | XGBoost |
+| 向量化 | 語義編碼 | BAAI/bge-small-zh-v1.5 |
+| LLM 推理 | 深度語義分析 | Groq (Llama 3.1:8b) |
+| 向量存儲 | 知識庫管理 | ChromaDB |
+
+### 推理流程
+
 ```
-
-預設 embedding model 為 `nomic-embed-text`，可於 `backend/config.py` 修改：
-
-```python
-OLLAMA_EMBED_MODEL
+輸入 (文字/URL)
+    ↓
+基礎規則檢測 (關鍵詞匹配)
+    ↓
+信心度評估
+    ├─ 高信心 → 直接返回結果
+    └─ 低信心 → 進入 RAG 流程
+        ├─ 向量檢索 (相似案例)
+        ├─ LLM 推理 (語義分析)
+        └─ 結果融合 → 返回結果
 ```
 
 ---
 
-### 3. 建立 ChromaDB 向量資料庫
+## 開發指南
+
+### 專案結構詳解
+
+#### Backend 層級
+
+- **routers/**: API 端點定義
+  - `text_inference.py`: 文字檢測路由
+  - `url_detection.py`: URL 檢測路由
+
+- **services/**: 業務邏輯
+  - `text_service/`: 文字分析流程
+    - `text_analyzer.py`: 協調層（功能編排）
+    - `transformer_classifier.py`: 模型推理
+    - `confidence_router.py`: 決策路由（是否使用 LLM）
+    - `rag_reasoner.py`: LLM 推理
+    - `fusion_service.py`: 結果融合
+  - `url_service/`: URL 分析流程
+
+- **rag/**: RAG 相關模組
+  - `rag_retriever.py`: 向量檢索
+  - `rag_reasoner.py`: LLM 推理
+  - `rag_context.py`: RAG 全局上下文
+
+- **db/**: 資料庫管理
+  - `chroma.py`: ChromaDB 初始化
+  - `rebuild.py`: 向量庫重建
+
+- **utils/**: 工具函式
+  - `features.py`: URL 特徵工程
+  - `pattern.py`: 關鍵詞規則比對
+  - `text_cleaner.py`: 文字前處理
+
+### 模型加載位置
+
+模型檔案存放於 `backend/models/`：
+
+- **LLM 模型**
+  - `bert_onnx_int8/`: 量化 BERT 模型
+  - `bert_onnx_output/`: 完整 BERT 模型
+  - `ckip-bert-ready/`: 繁體中文 BERT
+
+- **ML 模型**
+  - `url_scam_classifier.joblib`: URL 分類模型
+
+---
+
+
+### 建立 ChromaDB 向量資料庫
 
 執行前請確認：
 
 - 已匯入 `dataset`
-- Ollama 服務已啟動
 - 已下載所需 embedding model
-
-接著執行向量建庫腳本：
-
-```powershell
-python scripts/build_vector_db.py
-```
 
 完成後會於：
 
@@ -146,13 +236,7 @@ data/chroma/
 
 若環境已初始化完成，後續啟動僅需：
 
-### 1. 啟動 Ollama
-
-```powershell
-ollama serve
-```
-
-### 2. 啟動 FastAPI 開發伺服器
+### 啟動 FastAPI 開發伺服器
 
 ```powershell
 uv run python -m uvicorn backend.main:app --reload

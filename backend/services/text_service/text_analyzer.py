@@ -4,7 +4,7 @@ from backend.config import settings
 from backend.services.dto.analysis import BaseEvidence
 from backend.services.text_service.confidence_router import confidence_router
 from backend.services.text_service.fusion_service import fusion_service
-from backend.services.text_service.rag_reasoner import analyze_with_rag
+from backend.rag.rag_reasoner import analyze_with_rag
 from backend.services.text_service.transformer_classifier import transformer_classifier
 from backend.utils.pattern import compare_rules
 from backend.utils.text_cleaner import normalize_text
