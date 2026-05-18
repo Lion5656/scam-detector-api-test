@@ -1,7 +1,7 @@
 # 建立docker image(鏡像)
 
 # 選擇base image
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 # 設定work directory
 WORKDIR app
