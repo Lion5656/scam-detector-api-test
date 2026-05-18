@@ -1,12 +1,3 @@
----
-title: Scam Detector API
-emoji: 🚫
-colorFrom: blue
-colorTo: red
-sdk: docker
-pinned: false
----
-
 ### 基於 FastAPI 的多模型詐騙偵測 API 測試環境
 
 整合文字詐騙分類、URL 詐騙偵測與 RAG 推理流程，提供模組化的詐騙分析能力。
