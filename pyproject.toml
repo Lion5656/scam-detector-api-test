@@ -12,7 +12,6 @@ dependencies = [
     "langchain-core>=0.3.79",
     "langchain-groq>=1.1.2",
     "langchain-huggingface>=1.2.2",
-    "langchain-ollama>=1.1.0",
     "langchain-text-splitters>=0.3.11",
     "optimum[onnxruntime]>=1.16.0",
     "pandas",

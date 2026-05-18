@@ -1,8 +1,8 @@
 ---
-title: Scam Detector API
-emoji: 🚫
-colorFrom: blue
-colorTo: red
+title: Scam Detection
+emoji: 🔍
+colorFrom: red
+colorTo: orange
 sdk: docker
-pinned: false
+sdk_version: "2.0"
 ---

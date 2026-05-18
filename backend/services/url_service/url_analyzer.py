@@ -32,9 +32,9 @@ class Detector():
         prob = float(self.classifier.predict_proba(feat)[0][1])
         score = round(prob, 2)
         print(prob)
-        if prob >= 0.55:
-            return {"label": "高風險", "score": score}
+        if prob >= 0.46:
+            return {"label": "詐騙", "score": score}
         else:
-            return {"label": "低風險", "score": score}
+            return {"label": "安全", "score": score}
 
 detector = Detector()
