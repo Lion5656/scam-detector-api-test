@@ -8,10 +8,10 @@ router = APIRouter(prefix="/v1", tags=["url-detector"])
 
 # url網址分析
 @router.post("/anaylze/url", response_model=Response, summary="執行url分析")
-async def analyze_url(req: URLRequest) -> Response:
+def analyze_url(req: URLRequest) -> Response:
     try:
         url = str(req.url)
-        result = await detector.url_detector(url)
+        result = detector.url_detector(url)
 
         return Response(**result)
     except Exception as e:

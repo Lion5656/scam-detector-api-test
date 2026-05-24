@@ -24,7 +24,7 @@ class Detector():
         self.classifier = joblib.load(model_path)
         print("載入完畢")
 
-    async def url_detector(self, url: str) -> Dict:
+    def url_detector(self, url: str) -> Dict:
         if self.classifier is None:
             raise RuntimeError('url模型未載入')
 

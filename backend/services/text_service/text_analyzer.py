@@ -105,7 +105,7 @@ class TextAnalyzer:
             return base_result
 
         try:
-            rag_result = analyze_with_rag(evidence.text)
+            rag_result = await analyze_with_rag(evidence.text)
         except Exception as exc:
             fallback = dict(base_result)
             fallback["decision_source"] = "base"
@@ -115,7 +115,7 @@ class TextAnalyzer:
 
         return fusion_service.merge(base_result, rag_result, decision.route_reason)
 
-    async def model_detector(self, text: str) -> dict[str, Any]:
+    def model_detector(self, text: str) -> dict[str, Any]:
         """純模型檢測"""
         prediction = transformer_classifier.predict_text(text)
         return {

@@ -26,13 +26,13 @@ async def analyze_text(req: TextRequest) -> Response:
 
 
 @router.post("/analyze/text/model", response_model=Response, summary="純模型文字風險分析", description="僅使用文字分類模型")
-async def model_analyze_text(req: TextRequest) -> Response:
+def model_analyze_text(req: TextRequest) -> Response:
     try:
         text = normalize_text(req.text)
         if not text:
             raise HTTPException(status_code=400, detail="text 不可為空")
 
-        result = await text_analyzer.model_detector(text)
+        result = text_analyzer.model_detector(text)
         return Response(**result)
     except HTTPException:
         raise

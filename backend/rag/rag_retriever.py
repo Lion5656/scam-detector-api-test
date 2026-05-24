@@ -22,7 +22,7 @@ def get_retriever() -> Any:
 def format_context(docs: list[Any]) -> str:
     blocks: list[str] = []
     for idx, doc in enumerate(docs, start=1):
-        blocks.append(f"[相似案例 {idx}]\n{doc.page_content}")
+        blocks.append(f"[相似案例 {idx}]\n{doc.page_content[:190]}") # 限制每句參考在190以內
     return "\n\n".join(blocks)
 
 
