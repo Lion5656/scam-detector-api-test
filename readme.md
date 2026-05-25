@@ -25,7 +25,8 @@ scam-detection-project/
 │  │ 
 │  ├─ schemas/                          # 📋 API 資料模型
 │  │  ├─ __init__.py
-│  │  └─ analysis.py                    # Pydantic 請求/回應定義
+│  │  ├─ text.py                        # 簡訊請求/回應定義
+│  │  └─ url.py                         # 網址請求/回應定義
 │  │
 │  ├─ services/                         # ⚙️ 業務邏輯層
 │  │  ├─ __init__.py
@@ -45,7 +46,11 @@ scam-detection-project/
 │  │  └─ url_service/                   # 🌐 URL 詐騙分析流程
 │  │     ├─ __init__.py
 │  │     └─ url_analyzer.py             # 特徵工程 & XGBoost 推理
-│  │
+│  │       
+│  ├─ repository/                       # 資料存取層
+│  │  ├─ __init__.py
+│  │  └─ rag_repository.py
+│  │    
 │  ├─ rag/                              # 🧠 RAG 模組
 │  │  ├─ __init__.py
 │  │  ├─ rag_context.py                 # RAG 全局上下文 & 狀態管理
@@ -54,9 +59,6 @@ scam-detection-project/
 │  │  ├─ dto/
 │  │  │  ├─ __init__.py
 │  │  │  └─ analysis.py
-│  │  └─ repository/
-│  │     ├─ __init__.py
-│  │     └─ rag_repository.py
 │  │
 │  └─ utils/                            # 🔧 工具函式庫
 │     ├─ __init__.py
@@ -69,7 +71,7 @@ scam-detection-project/
 - **API 層**：FastAPI 應用管理
 - **路由層**：HTTP 端點定義
 - **業務邏輯層**：核心分析引擎 (協調/推理/決策/融合)
-- **資料存取層**：向量庫 CRUD 操作
+- **資料存取層**：資料存取操作
 - **RAG 模組**：知識庫檢索與 LLM 推理
 - **工具庫**：特徵工程與文字處理
 
@@ -96,20 +98,13 @@ pip install -r requirements.txt
 在專案根目錄建立 `.env` 檔案：
 
 ```env
-# FastAPI 伺服器設定
-ENVIRONMENT=development
-
-# RAG 模型設定
-EMBED_MODEL=BAAI/bge-small-zh-v1.5
-RAG_PERSIST_DIR=data/chroma
-
 # LLM API 設定
 GROQ_API_KEY=your_groq_api_key  # 可選，若使用 Groq LLM
 ```
 
 ### 3. 初始化向量資料庫
 
-若為首次使用，執行以下指令建立 ChromaDB：
+執行以下指令建立 ChromaDB：
 
 ```bash
 python backend/db/rebuild.py
@@ -191,20 +186,6 @@ uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
   - `pattern.py`: 關鍵詞規則比對
   - `text_cleaner.py`: 文字前處理
 
-### 模型加載位置
-
-模型檔案存放於 `backend/models/`：
-
-- **LLM 模型**
-  - `bert_onnx_int8/`: 量化 BERT 模型
-  - `bert_onnx_output/`: 完整 BERT 模型
-  - `ckip-bert-ready/`: 繁體中文 BERT
-
-- **ML 模型**
-  - `url_scam_classifier.joblib`: URL 分類模型
-
----
-
 
 ### 建立 ChromaDB 向量資料庫
 
@@ -246,9 +227,3 @@ uv run python -m uvicorn backend.main:app --reload
 - Local Dependency Management：uv + pyproject.toml
 - Docker Dependency Installation：requirements.txt
 - Exposed Port：7860
-
-### FastAPI 啟動 Port
-
-```text
-0.0.0.0:7860
-```
