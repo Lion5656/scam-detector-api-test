@@ -12,9 +12,10 @@ class Settings(BaseSettings):
     APP_NAME: str = "Scam detetcor"
     DEBUG: bool = True
 
-    HF_TEXT_REPO_ID: str = "kko12/spam-detector-chinese"
-    HF_URL_REPO_ID: str = "kko12/url-detector"
-    HF_PERSIST_REPO_ID: str = "kko12/scam-rag-db"
+    HF_TEXT_REPO_ID: str = "scam-project/spam-detector-chinese"
+    HF_URL_REPO_ID: str = "scam-project/url-detector"
+    HF_PERSIST_REPO_ID: str = "scam-project/scam-rag-db"
+    HF_TOKEN: str = ""
 
     REGEX_WEIGHT: float = 0.55
     MODEL_WEIGHT: float = 0.45
@@ -22,6 +23,8 @@ class Settings(BaseSettings):
     HIGH_THRESHOLD: float = 0.5
     MEDIUM_THRESHOLD: float = 0.6
     UNKNOWN_THRESHOLD: float = 0.7
+
+    URL_THRESHOLD: float = 0.46
 
     DEVICE: str = "cpu"
     BASE_MODEL_PATH: str = str(BASE_DIR / "models")
@@ -48,6 +51,17 @@ class Settings(BaseSettings):
         env_file=[os.path.join(BASE_DIR, ".env"), os.path.join(ROOT_DIR, ".env")],
         extra="ignore",
     )
+    
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"release", "prod", "production"}:
+                return False
+            if normalized in {"debug", "dev", "development"}:
+                return True
+        return value
 
 
 settings = Settings()
