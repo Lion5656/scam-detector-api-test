@@ -37,9 +37,15 @@ class Settings(BaseSettings):
     RAG_PERSIST_DIR: str = str(ROOT_DIR / "data" / "chroma")
     EMBED_MODEL: str = "BAAI/bge-small-zh-v1.5"
 
+    DB_USERNAME: str = "root"
+    DB_PASSWORD: str = ""
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 3306
+    DB_NAME: str = "phone_db"
+
     GROQ_API_KEY: str = ""
     model_config = SettingsConfigDict(
-        env_file=os.path.join(BASE_DIR, ".env"),
+        env_file=[os.path.join(BASE_DIR, ".env"), os.path.join(ROOT_DIR, ".env")],
         extra="ignore",
     )
 

@@ -24,6 +24,8 @@ dependencies = [
     "transformers>=4.40.0",
     "uvicorn",
     "xgboost",
+    "sqlalchemy",
+    "pymysql",
 ]
 [tool.fastapi]
 entrypoint = "backend.main:app"

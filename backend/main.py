@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from backend.routers import text_inference, url_detection
+from backend.routers import phone_detection
 from backend.services.text_service.transformer_classifier import transformer_classifier
 from backend.services.url_service.url_analyzer import detector
 from backend.rag.rag_retriever import is_rag_ready
@@ -60,6 +61,7 @@ app = FastAPI(
 # 掛載router
 app.include_router(text_inference.router)
 app.include_router(url_detection.router)
+app.include_router(phone_detection.router)
 
 @app.get("/")
 async def root():
