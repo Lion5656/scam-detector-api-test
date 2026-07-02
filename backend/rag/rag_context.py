@@ -1,5 +1,6 @@
-from typing import Any
 import os
+from typing import Any
+
 from huggingface_hub import snapshot_download
 
 from backend.config import settings
@@ -18,7 +19,7 @@ class RAGContext:
             repo_id=settings.HF_PERSIST_REPO_ID,
             repo_type="dataset",
             local_dir=settings.RAG_PERSIST_DIR,
-            token=os.getenv("HF_TOKEN")
+            token=settings.HF_TOKEN or None
         )
         print("向量資料庫加載完畢")
 
@@ -48,4 +49,5 @@ class RAGContext:
         app = cls.get_app()
         if not hasattr(app.state, 'embeddings'):
             raise RuntimeError("embeddings 尚未初始化")
+        return app.state.embeddings
         return app.state.embeddings

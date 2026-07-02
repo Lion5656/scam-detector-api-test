@@ -40,11 +40,13 @@ class Settings(BaseSettings):
     RAG_PERSIST_DIR: str = str(ROOT_DIR / "data" / "chroma")
     EMBED_MODEL: str = "BAAI/bge-small-zh-v1.5"
 
-    DB_USERNAME: str = "root"
+    DB_USERNAME: str = ""
     DB_PASSWORD: str = ""
-    DB_HOST: str = "localhost"
-    DB_PORT: int = 3306
-    DB_NAME: str = "phone_db"
+    DB_HOST: str = ""
+    DB_PORT: int = 10126
+    DB_NAME: str = ""
+    DB_TIMEOUT: int = 10
+    DB_SSL_CA: str = "ca.pem"
 
     GROQ_API_KEY: str = ""
     model_config = SettingsConfigDict(

@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
-from backend.db import engine
+from backend.database import engine
 
 
 class PhoneService:

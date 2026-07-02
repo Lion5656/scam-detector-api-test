@@ -1,17 +1,18 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-
-from backend.routers import text_inference, url_detection
-from backend.routers import phone_detection
-from backend.services.text_service.transformer_classifier import transformer_classifier
-from backend.services.url_service.url_analyzer import detector
-from backend.rag.rag_retriever import is_rag_ready
-from backend.rag.rag_context import RAGContext
-from backend.config import settings
-
+from fastapi.middleware.cors import CORSMiddleware
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+
+from backend.config import settings
+from backend.rag.rag_context import RAGContext
+from backend.rag.rag_retriever import is_rag_ready
+from backend.routers import phone_detection, text_inference, url_detection
+from backend.services.text_service.transformer_classifier import \
+    transformer_classifier
+from backend.services.url_service.url_analyzer import detector
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -56,6 +57,15 @@ app = FastAPI(
     title="詐騙風險偵測模型API",
     description="測試用API",
     version="2.0.0"    
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # 掛載router

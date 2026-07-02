@@ -26,6 +26,7 @@ dependencies = [
     "xgboost",
     "sqlalchemy",
     "pymysql",
+    "supabase>=2.31.0",
 ]
 [tool.fastapi]
 entrypoint = "backend.main:app"
