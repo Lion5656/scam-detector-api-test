@@ -39,6 +39,20 @@ class Settings(BaseSettings):
     RAG_DATASET_PATH: str = str(ROOT_DIR / "data" / "raw" / "scam-dataset.json")
     RAG_PERSIST_DIR: str = str(ROOT_DIR / "data" / "chroma")
     EMBED_MODEL: str = "BAAI/bge-small-zh-v1.5"
+    MARKET_PRICE_DB_PATH: str = str(ROOT_DIR / "data" / "market_prices_tw.json")
+    ONLINE_PRICE_ENABLED: bool = True
+    ONLINE_PRICE_MAX_RESULTS: int = 8
+    ONLINE_PRICE_SITES: str = "momo.com.tw,pchome.com.tw,shopee.tw,tw.buy.yahoo.com"
+    ONLINE_PRICE_MIN_SITES: int = 2
+    ONLINE_PRICE_MIN_PRICE_POINTS: int = 3
+    PRODUCT_MATCH_FUZZY_MIN_SCORE: int = 86
+    ENABLE_INTELLIGENT_LAYER: bool = True
+    INTELLIGENT_CONFIDENCE_THRESHOLD: float = 0.82
+    BLACKLIST_TERMS_PATH: str = str(ROOT_DIR / "data" / "blacklist_terms.json")
+    CASE_LOG_PATH: str = str(ROOT_DIR / "data" / "cases" / "image_analysis_cases.jsonl")
+    CASE_MEMORY_ENABLED: bool = True
+    OCR_PROVIDER: str = "google_vision"
+    GCV_LANGUAGE_HINTS: str = "zh-TW,en"
 
     DB_USERNAME: str = ""
     DB_PASSWORD: str = ""
