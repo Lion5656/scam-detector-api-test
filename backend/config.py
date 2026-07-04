@@ -62,8 +62,11 @@ class Settings(BaseSettings):
     DB_TIMEOUT: int = 10
     DB_SSL_CA: str = "ca.pem"
 
+<<<<<<< HEAD
     GOOGLE_API_KEY: str = ""
     GOOGLE_CSE_ID: str = ""
+=======
+>>>>>>> caceac604d1b92bf5150ef7fa765e0dd225bf8c5
     GROQ_API_KEY: str = ""
     model_config = SettingsConfigDict(
         env_file=[os.path.join(BASE_DIR, ".env"), os.path.join(ROOT_DIR, ".env")],

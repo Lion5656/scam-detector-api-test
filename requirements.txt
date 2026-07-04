@@ -32,3 +32,5 @@ tldextract
 # ML模型
 xgboost
 torch
+sqlalchemy
+pymysql
