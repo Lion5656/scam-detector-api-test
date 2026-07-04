@@ -1,4 +1,3 @@
-import os
 from typing import Any, Dict, List, cast
 
 from optimum.onnxruntime import ORTModelForSequenceClassification
@@ -31,7 +30,7 @@ class TransformerClassifier:
         print("載入量化文字推理模型...")
         model_id = settings.HF_TEXT_REPO_ID
         device = settings.DEVICE
-        token = os.getenv("HF_TOKEN")
+        token = settings.HF_TOKEN or None
         tokenizer = AutoTokenizer.from_pretrained(model_id, token=token)
         model = ORTModelForSequenceClassification.from_pretrained(
             model_id,

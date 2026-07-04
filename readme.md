@@ -13,20 +13,29 @@
 ```text
 scam-detection-project/
 │
+├─ Dockerfile                           # Docker 部署設定
+├─ pyproject.toml                       # 專案套件與工具設定
+├─ requirements.txt                     # Python 相依套件清單
+├─ uv.lock                              # uv 鎖定檔
+├─ ca.pem                               # 資料庫 SSL 憑證
+│
 ├─ backend/                             # 後端主程式
 │  ├─ __init__.py
 │  ├─ main.py                           # FastAPI 應用入口 & 生命週期管理
 │  ├─ config.py                         # 環境變數與全局設定
+│  ├─ database.py                       # 資料庫連線設定
 │  │ 
 │  ├─ routers/                          # 🛣️ API 路由層
 │  │  ├─ __init__.py
-│  │  ├─ text_inference.py             
-│  │  └─ url_detection.py              
+│  │  ├─ text_inference.py              # 文字詐騙檢測端點
+│  │  ├─ url_detection.py               # URL 詐騙檢測端點
+│  │  └─ phone_detection.py             # 電話詐騙檢測端點
 │  │ 
 │  ├─ schemas/                          # 📋 API 資料模型
 │  │  ├─ __init__.py
 │  │  ├─ text.py                        # 簡訊請求/回應定義
-│  │  └─ url.py                         # 網址請求/回應定義
+│  │  ├─ url.py                         # 網址請求/回應定義
+│  │  └─ phone.py                       # 電話請求/回應定義
 │  │
 │  ├─ services/                         # ⚙️ 業務邏輯層
 │  │  ├─ __init__.py
@@ -43,9 +52,13 @@ scam-detection-project/
 │  │  │  ├─ rag_reasoner.py             # [推理層] LLM 深度分析 & 結果解析
 │  │  │  └─ fusion_service.py           # [融合層] 多源結果加權融合
 │  │  │
-│  │  └─ url_service/                   # 🌐 URL 詐騙分析流程
+│  │  ├─ url_service/                   # 🌐 URL 詐騙分析流程
+│  │  │  ├─ __init__.py
+│  │  │  └─ url_analyzer.py             # 特徵工程 & XGBoost 推理
+│  │  │  
+│  │  └─ phone_service/                 # ☎️ 電話詐騙分析流程
 │  │     ├─ __init__.py
-│  │     └─ url_analyzer.py             # 特徵工程 & XGBoost 推理
+│  │     └─ phone_service.py            # 電話風險查詢與判定
 │  │       
 │  ├─ repository/                       # 資料存取層
 │  │  ├─ __init__.py
@@ -56,7 +69,7 @@ scam-detection-project/
 │  │  ├─ rag_context.py                 # RAG 全局上下文 & 狀態管理
 │  │  ├─ rag_retriever.py               # 向量檢索 & Context 組裝
 │  │  ├─ rag_reasoner.py                # LLM 推理與結果解析
-│  │  ├─ dto/
+│  │  └─ dto/
 │  │  │  ├─ __init__.py
 │  │  │  └─ analysis.py
 │  │
@@ -65,6 +78,8 @@ scam-detection-project/
 │     ├─ features.py                    # URL 特徵工程 (30+ 維度)
 │     ├─ pattern.py                     # 關鍵詞匹配 & 正則規則
 │     └─ text_cleaner.py                # 文字前處理 & 標準化
+│
+└─ readme.md                            # 專案說明文件
 ```
 
 **📋 分層說明：**
@@ -95,22 +110,16 @@ pip install -r requirements.txt
 
 ### 2. 環境變數設定
 
-在專案根目錄建立 `.env` 檔案：
+本專案採用Aiven雲端資料庫託管，本地測試請在專案根目錄建立 `.env` 檔案：
 
 ```env
-# LLM API 設定
-GROQ_API_KEY=your_groq_api_key  # 可選，若使用 Groq LLM
+DB_HOST=mysql-xxxxx-yourproject.aivencloud.com
+DB_USERNAME=avnadmin
+DB_NAME=defaultdb
+DB_PASSWORD=請向團隊管理員索取密碼
 ```
 
-### 3. 初始化向量資料庫
-
-執行以下指令建立 ChromaDB：
-
-```bash
-python backend/db/rebuild.py
-```
-
-### 4. 啟動服務
+### 3. 啟動服務
 
 ```bash
 # 開發模式
@@ -186,25 +195,6 @@ uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
   - `pattern.py`: 關鍵詞規則比對
   - `text_cleaner.py`: 文字前處理
 
-
-### 建立 ChromaDB 向量資料庫
-
-執行前請確認：
-
-- 已匯入 `dataset`
-- 已下載所需 embedding model
-
-完成後會於：
-
-```text
-data/chroma/
-```
-
-生成 ChromaDB 向量資料庫。
-
----
-
-## 後續啟動專案
 
 若環境已初始化完成，後續啟動僅需：
 

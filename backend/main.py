@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+<<<<<<< HEAD
 
 from backend.routers import image_inference, text_inference, url_detection
 from backend.services.text_service.transformer_classifier import transformer_classifier
@@ -9,8 +10,20 @@ from backend.rag.rag_retriever import is_rag_ready
 from backend.rag.rag_context import RAGContext
 from backend.config import settings
 
+=======
+from fastapi.middleware.cors import CORSMiddleware
+>>>>>>> caceac604d1b92bf5150ef7fa765e0dd225bf8c5
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+
+from backend.config import settings
+from backend.rag.rag_context import RAGContext
+from backend.rag.rag_retriever import is_rag_ready
+from backend.routers import phone_detection, text_inference, url_detection
+from backend.services.text_service.transformer_classifier import \
+    transformer_classifier
+from backend.services.url_service.url_analyzer import detector
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,10 +70,23 @@ app = FastAPI(
     version="2.0.0"    
 )
 
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # 掛載router
 app.include_router(text_inference.router)
 app.include_router(url_detection.router)
+<<<<<<< HEAD
 app.include_router(image_inference.router)
+=======
+app.include_router(phone_detection.router)
+>>>>>>> caceac604d1b92bf5150ef7fa765e0dd225bf8c5
 
 @app.get("/")
 async def root():

@@ -35,17 +35,19 @@ def _get_prompt() -> Any:
         請依序完成以下判斷：
         第一步：判斷這則訊息的主要目的
         - A：提醒他人避免詐騙、警示風險、安全建議
-        - B：可疑訊息（詐騙、誘導、索資、施壓）
-        - C：一般安全訊息（正常日常對話）
+        - B：可疑訊息（詐騙、誘導、索資、施壓、領錢、假冒通知）
+        - C：一般安全訊息（正常日常對話、正常通知）
         - D：對話類互動異常（對話中出現一方威脅、一方示弱、且具有情緒操控）
         
         第二步：
-        - 若第一步為 A，直接輸出下方 JSON，reason：用繁體中文說明，禁止複製原文，其他欄位全部填 0.0：
+        - 若第一步為 A，分析以下維度（0~1）：
+        - is_anti_fraud：是否具有反詐騙、教育勸導 
+        直接輸出下方 JSON，reason，其他欄位全部填 0.0，用繁體中文說明，禁止複製原文
         {format_instructions}
         
         - 若第一步為 B 或 C，再分析以下維度（0~1）：
         - urgency：催促、限時、要求立即操作
-        - money_related：誘導金錢交易、投資、匯款
+        - money_related：誘導金錢交易、投資、匯款，通知領錢
         - baiting：不合理優惠、保證獲利、隱藏交易
         - asks_for_personal_info：要求個資、帳號、驗證碼
         - reputation：來源可疑、假冒權威、誇大承諾
@@ -54,7 +56,7 @@ def _get_prompt() -> Any:
 
         - 若第一步為 D，分析以下維度（0~1）：
         - urgency：是否出現威脅、限時、製造恐慌
-        - money_related：是否涉及借錢、投資、轉帳請求
+        - money_related：是否涉及借錢、投資、轉帳請求，通知領錢
         - baiting：是否以感情、同情、利益逐步誘導
         - asks_for_personal_info：是否套問個資、帳號、行蹤
         - reputation：身份是否可疑、前後矛盾、來路不明
@@ -79,7 +81,9 @@ def _get_llm() -> Any:
         model_name=settings.RAG_MODEL_NAME, 
         temperature = 0.1,
         api_key=api_key,
-        
+        model_kwargs={
+            "top_p": 0.7,
+        }
     )
 
 
