@@ -1,9 +1,9 @@
 from typing import Any
 
-from backend.rag.dto.analysis import RagEvidence
+from backend.rag.dto.rag_analysis import RagEvidence
 
 
-class FusionService:
+class Fusion:
     def merge(self, base_result: dict[str, Any],
         rag_result: RagEvidence,  route_reason: str) -> dict[str, Any]:
 
@@ -23,4 +23,4 @@ class FusionService:
         return merged
 
 
-fusion_service = FusionService()
+fusion = Fusion()

@@ -40,7 +40,7 @@ class PhoneQueryResponse(BaseModel):
     last_reported_at: str | None = None
     owner_name: str | None = None
     can_report: bool = False
-    report_options: list[str] = []
+    report_options: list[str] = Field(default_factory=list)
 
 
 class PhoneReportResponse(BaseModel):

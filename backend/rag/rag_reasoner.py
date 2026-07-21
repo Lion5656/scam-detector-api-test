@@ -1,19 +1,23 @@
 import json
-import re
 import os
 from typing import Any
 
 from backend.config import settings
-from backend.rag.dto.analysis import RagEvidence, RagResponse
-from backend.rag.rag_retriever import format_context, get_retriever, is_rag_ready, normalize_query_text
+from backend.rag.dto.rag_analysis import RagEvidence, RagResponse
+from backend.rag.rag_retriever import (
+    format_context,
+    get_retriever,
+    is_rag_ready,
+    normalize_query_text,
+)
 from backend.utils.text_cleaner import normalize_escape_sequences
 
-
+_rag_chain : Any | None = None
 
 def _require_langchain() -> tuple[Any, Any, Any, Any]:
+    from langchain_core.output_parsers import JsonOutputParser
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.runnables import RunnablePassthrough
-    from langchain_core.output_parsers import JsonOutputParser
     from langchain_groq import ChatGroq
 
     return ChatPromptTemplate, RunnablePassthrough, JsonOutputParser, ChatGroq
@@ -92,6 +96,12 @@ def _get_parser() -> Any:
     parser = JsonOutputParser(pydantic_object=RagResponse)
     return parser
 
+def get_rag_chain() -> Any:
+    global _rag_chain
+    if _rag_chain is None:
+        _rag_chain = build_rag_chain()
+    return _rag_chain
+
 def build_rag_chain() -> Any:
     _, RunnablePassthrough, _, _ = _require_langchain()
 
@@ -158,7 +168,7 @@ async def analyze_with_rag(message: str) -> RagEvidence:
     if not is_rag_ready():
         return RagEvidence(used=False)
 
-    rag_chain = build_rag_chain()
+    rag_chain = get_rag_chain()
     # 避免被同步請求卡住
     chain_output = await rag_chain.ainvoke(message)
     if isinstance(chain_output, dict):

@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     RAG_DATASET_PATH: str = str(ROOT_DIR / "data" / "raw" / "scam-dataset.json")
     RAG_PERSIST_DIR: str = str(ROOT_DIR / "data" / "chroma")
     EMBED_MODEL: str = "BAAI/bge-small-zh-v1.5"
+    
+    PRODUCT_MODEL_NAME: str = "qwen/qwen3.6-27b"
+    ALLOWED_IMAGE_TYPES : set[str] = {"image/jpeg", "image/png", "image/webp"}
+    MAX_IMAGE_BYTES : int = 20 * 1024 * 1024  # 20MB
     MARKET_PRICE_DB_PATH: str = str(ROOT_DIR / "data" / "market_prices_tw.json")
     ONLINE_PRICE_ENABLED: bool = True
     ONLINE_PRICE_MAX_RESULTS: int = 8
@@ -62,12 +66,9 @@ class Settings(BaseSettings):
     DB_TIMEOUT: int = 10
     DB_SSL_CA: str = "ca.pem"
 
-<<<<<<< HEAD
-    GOOGLE_API_KEY: str = ""
-    GOOGLE_CSE_ID: str = ""
-=======
->>>>>>> caceac604d1b92bf5150ef7fa765e0dd225bf8c5
-    GROQ_API_KEY: str = ""
+    GCP_OCR_SERVICE_ACCOUNT_JSON : str = ""
+
+    GROQ_API_KEY: SecretStr = SecretStr("")
     model_config = SettingsConfigDict(
         env_file=[os.path.join(BASE_DIR, ".env"), os.path.join(ROOT_DIR, ".env")],
         extra="ignore",

@@ -1,12 +1,13 @@
 from typing import Any, Dict, List, cast
 
 from optimum.onnxruntime import ORTModelForSequenceClassification
-from transformers import AutoTokenizer, Pipeline, PreTrainedTokenizerBase, pipeline
+from transformers import (AutoTokenizer, Pipeline, PreTrainedTokenizerBase,
+                          pipeline)
 
 from backend.config import settings
 
 
-class TransformerClassifier:
+class BaseClassifier:
     """Transformer 模型加載與推理"""
 
     def __init__(self) -> None:
@@ -134,4 +135,4 @@ class TransformerClassifier:
         }
 
 
-transformer_classifier = TransformerClassifier()
+base_classifier = BaseClassifier()

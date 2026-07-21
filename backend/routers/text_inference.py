@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from backend.config import settings
-from backend.schemas.text import TextResponse, TextRequest
+from backend.schemas.text import TextRequest, TextResponse
 from backend.services.text_service.text_analyzer import text_analyzer
 from backend.utils.text_cleaner import normalize_text
 
@@ -17,8 +17,6 @@ async def analyze_text(req: TextRequest) -> TextResponse:
 
         result = await text_analyzer.hybrid_detector(text)
         return TextResponse(**result)
-    except HTTPException:
-        raise
     except Exception as e:
         if settings.DEBUG:
             raise HTTPException(status_code=500, detail=str(e))
@@ -34,8 +32,6 @@ def model_analyze_text(req: TextRequest) -> TextResponse:
 
         result = text_analyzer.model_detector(text)
         return TextResponse(**result)
-    except HTTPException:
-        raise
     except Exception as e:
         if settings.DEBUG:
             raise HTTPException(status_code=500, detail=str(e))

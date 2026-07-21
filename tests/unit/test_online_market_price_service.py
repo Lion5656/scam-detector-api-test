@@ -1,4 +1,6 @@
-from backend.services.image_service.online_market_price_service import OnlineMarketPriceService
+from backend.services.image_price_service.pricing.online_marketprice_service import (
+    OnlineMarketPriceService,
+)
 
 
 def test_aggregate_from_site_prices_uses_multi_site_median():
@@ -17,12 +19,11 @@ def test_aggregate_from_site_prices_uses_multi_site_median():
 
 def test_aggregate_from_site_prices_requires_min_sites(monkeypatch):
     svc = OnlineMarketPriceService()
-    monkeypatch.setattr("backend.services.image_service.online_market_price_service.settings.ONLINE_PRICE_MIN_SITES", 2)
+    monkeypatch.setattr(
+        "backend.services.image_price_service.pricing.lookup.settings.ONLINE_PRICE_MIN_SITES",
+        2,
+    )
 
-    site_prices = {
-        "momo": [30000, 30500, 31000],
-    }
-
-    price = svc._aggregate_from_site_prices(site_prices)
+    price = svc._aggregate_from_site_prices({"momo": [30000, 30500, 31000]})
 
     assert price == 0

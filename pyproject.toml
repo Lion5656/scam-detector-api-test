@@ -6,6 +6,9 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi[standard]",
+    "ddgs",
+    "google-api-python-client",
+    "google-cloud-vision",
     "huggingface-hub>=0.36.2",
     "langchain-chroma>=0.2.6",
     "langchain-community>=0.4.1",
@@ -28,5 +31,11 @@ dependencies = [
     "pymysql",
     "supabase>=2.31.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
 [tool.fastapi]
 entrypoint = "backend.main:app"

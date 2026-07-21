@@ -1,9 +1,11 @@
-from urllib.parse import urlparse, parse_qs 
-from typing import Dict, List
-import re, math
-import tldextract
+import math
+import re
+from typing import Dict
+from urllib.parse import parse_qs, urlparse
+
 import pandas as pd
-from pandas import DataFrame 
+import tldextract
+from pandas import DataFrame
 
 FEATURE_NAMES = [
     "url_length", "num_dot", "num_dash", "num_slash",

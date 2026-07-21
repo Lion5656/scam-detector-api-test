@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from backend.services.dto.analysis import BaseEvidence
+from backend.services.dto.text_analysis import BaseEvidence
 
 
 @dataclass(frozen=True)

@@ -1,12 +1,12 @@
 from typing import Any, cast
 
 from backend.config import settings
-from backend.services.dto.analysis import BaseEvidence
-from backend.services.text_service.confidence_router import confidence_router
-from backend.services.text_service.fusion_service import fusion_service
 from backend.rag.rag_reasoner import analyze_with_rag
-from backend.services.text_service.transformer_classifier import transformer_classifier
-from backend.utils.pattern import compare_rules
+from backend.services.dto.text_analysis import BaseEvidence
+from backend.services.text_service.base_classifier import base_classifier
+from backend.services.text_service.confidence_router import confidence_router
+from backend.services.text_service.fusion import fusion
+from backend.utils.pattern.text import compare_rules
 from backend.utils.text_cleaner import normalize_text
 
 
@@ -17,7 +17,7 @@ class TextAnalyzer:
         """構建基礎證據：規則特徵 + 模型預測"""
         cleaned = normalize_text(text)
         rule_score, rule_reason, rule_hits = compare_rules(cleaned)
-        model_result = transformer_classifier.predict_text(cleaned)
+        model_result = base_classifier.predict_text(cleaned)
         return BaseEvidence(
             text=cleaned,
             rule_score=rule_score,
@@ -113,11 +113,11 @@ class TextAnalyzer:
             fallback["route_reason"] = f"rag_failed:{exc.__class__.__name__}"
             return fallback
 
-        return fusion_service.merge(base_result, rag_result, decision.route_reason)
+        return fusion.merge(base_result, rag_result, decision.route_reason)
 
     def model_detector(self, text: str) -> dict[str, Any]:
         """純模型檢測"""
-        prediction = transformer_classifier.predict_text(text)
+        prediction = base_classifier.predict_text(text)
         return {
             "label": prediction["label"] or "",
             "cls_model_confidence": float(prediction.get("confidence") or 0.0),

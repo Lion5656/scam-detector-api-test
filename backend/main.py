@@ -1,27 +1,16 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-<<<<<<< HEAD
-
-from backend.routers import image_inference, text_inference, url_detection
-from backend.services.text_service.transformer_classifier import transformer_classifier
-from backend.services.url_service.url_analyzer import detector
-from backend.rag.rag_retriever import is_rag_ready
-from backend.rag.rag_context import RAGContext
-from backend.config import settings
-
-=======
 from fastapi.middleware.cors import CORSMiddleware
->>>>>>> caceac604d1b92bf5150ef7fa765e0dd225bf8c5
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
 from backend.config import settings
 from backend.rag.rag_context import RAGContext
 from backend.rag.rag_retriever import is_rag_ready
-from backend.routers import phone_detection, text_inference, url_detection
-from backend.services.text_service.transformer_classifier import \
-    transformer_classifier
+from backend.routers import (image_price_validation, phone_detection,
+                             text_inference, url_detection)
+from backend.services.text_service.base_classifier import base_classifier
 from backend.services.url_service.url_analyzer import detector
 
 
@@ -30,7 +19,7 @@ async def lifespan(app: FastAPI):
     print("應用環境啟動")
     
     
-    transformer_classifier.load_model()  # 載入 Transformer 模型
+    base_classifier.load_model()  # 載入 Base 模型
     detector.load_model()
 
     print("初始化 RAG")
@@ -82,11 +71,8 @@ app.add_middleware(
 # 掛載router
 app.include_router(text_inference.router)
 app.include_router(url_detection.router)
-<<<<<<< HEAD
-app.include_router(image_inference.router)
-=======
+app.include_router(image_price_validation.router)
 app.include_router(phone_detection.router)
->>>>>>> caceac604d1b92bf5150ef7fa765e0dd225bf8c5
 
 @app.get("/")
 async def root():

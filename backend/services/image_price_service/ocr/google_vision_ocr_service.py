@@ -1,0 +1,158 @@
+"""將商品圖片送往 Google Cloud Vision，並整理 OCR 文字與版面資訊。"""
+
+import json
+import os
+import re
+import unicodedata
+from typing import Any, cast
+
+from google.oauth2 import service_account
+
+from backend.config import settings
+from backend.services.image_price_service.models import OCRDocument, OCRTextBlock
+
+
+class GoogleVisionOCRService:
+    """擷取商品圖片的 OCR 全文、段落座標與頁面尺寸。
+
+    服務會使用設定的 Google 服務帳戶與語言提示，先呼叫文件文字偵測以保留
+    段落邊界框和閱讀順序；若未取得全文，再改用一般文字偵測並只回傳文字。
+    """
+    @staticmethod
+    def _clean_ocr_text(text: str, *, preserve_lines: bool = False) -> str:
+        """正規化空白與常見英數辨識錯字，並依需求保留換行。"""
+        text = unicodedata.normalize("NFKC", text)
+        text = re.sub(r"[\r\t]+", " ", text)
+        if preserve_lines:
+            text = "\n".join(
+                re.sub(r"\s+", " ", line).strip()
+                for line in text.splitlines()
+                if line.strip()
+            )
+        else:
+            text = re.sub(r"\s+", " ", text).strip()
+
+        # 修正商品名稱與型號中常見的英數字元誤判。
+        replacements = {
+            "iph0ne": "iphone",
+            "ga1axy": "galaxy",
+            "airp0ds": "airpods",
+            "rnacbook": "macbook",
+        }
+        cleaned = text
+        for src, dst in replacements.items():
+            cleaned = re.sub(src, dst, cleaned, flags=re.IGNORECASE)
+        return cleaned
+
+    @staticmethod
+    def _extract_paragraph_text(paragraph) -> str:
+        """依符號與單字順序組合 Google Vision 段落文字。"""
+        words: list[str] = []
+        for word in paragraph.words:
+            word_text = "".join(symbol.text for symbol in word.symbols)
+            if word_text:
+                words.append(word_text)
+        return " ".join(words).strip()
+
+    @staticmethod
+    def _bbox_from_vertices(vertices) -> tuple[float, float, float, float]:
+        """將邊界框頂點換算為最小與最大座標。"""
+        xs = [float(v.x or 0) for v in vertices]
+        ys = [float(v.y or 0) for v in vertices]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def extract_text(self, data: bytes) -> str:
+        """回傳保留閱讀行序的 OCR 全文，供只需要文字的呼叫端使用。"""
+        return self.extract_document(data).text
+
+    def extract_document(self, data: bytes) -> OCRDocument:
+        """將圖片轉成包含全文、段落座標與頁面尺寸的 OCR 文件。"""
+        provider = settings.OCR_PROVIDER.strip().lower()
+        if provider not in {"google", "google_vision", "gcv"}:
+            raise RuntimeError("OCR_PROVIDER 僅支援 google_vision")
+
+        return self._extract_document_with_google_vision(data)
+
+    def _extract_text_with_google_vision(self, data: bytes) -> str:
+        """透過 Google Vision 取得全文，保留此方法以相容既有呼叫端。"""
+        return self._extract_document_with_google_vision(data).text
+
+    def _extract_document_with_google_vision(self, data: bytes) -> OCRDocument:
+        """呼叫 Google Vision，優先回傳含段落座標的文件 OCR 結果。"""
+        try:
+            from google.cloud import vision
+        except ImportError as e:
+            raise RuntimeError("Google Cloud Vision 套件未安裝，請安裝 google-cloud-vision") from e
+
+        try:
+            key_json_str = settings.GCP_OCR_SERVICE_ACCOUNT_JSON or os.getenv("GCP_OCR_SERVICE_ACCOUNT_JSON")
+            key_info = json.loads(key_json_str) if key_json_str else None
+
+            credentials = service_account.Credentials.from_service_account_info(key_info)
+            client = vision.ImageAnnotatorClient(credentials=credentials)
+            image = vision.Image(content=data)
+            language_hints = [h.strip() for h in settings.GCV_LANGUAGE_HINTS.split(",") if h.strip()]
+            image_context = vision.ImageContext(language_hints=language_hints)
+
+            # 文件文字偵測能保留段落結構，較適合包含多行刊登資訊的截圖。
+            doc_response = cast(Any, client).document_text_detection(image=image, image_context=image_context)
+            if doc_response.error.message:
+                raise RuntimeError(f"Google Vision OCR 錯誤: {doc_response.error.message}")
+            doc_text = (doc_response.full_text_annotation.text or "").strip()
+            if doc_text:
+                pages = doc_response.full_text_annotation.pages
+                blocks: list[OCRTextBlock] = []
+                page_width = 0.0
+                page_height = 0.0
+
+                for page in pages:
+                    page_width = max(page_width, float(page.width or 0))
+                    page_height = max(page_height, float(page.height or 0))
+                    for block in page.blocks:
+                        for paragraph in block.paragraphs:
+                            paragraph_text = self._extract_paragraph_text(paragraph)
+                            if not paragraph_text:
+                                continue
+                            x0, y0, x1, y1 = self._bbox_from_vertices(
+                                paragraph.bounding_box.vertices
+                            )
+                            confidence = getattr(paragraph, "confidence", None)
+                            blocks.append(OCRTextBlock(
+                                text=self._clean_ocr_text(paragraph_text),
+                                x=x0,
+                                y=y0,
+                                width=x1 - x0,
+                                height=y1 - y0,
+                                confidence=float(confidence) if confidence is not None else None,
+                            ))
+
+                blocks.sort(key=lambda item: (
+                    item.y if item.y is not None else float("inf"),
+                    item.x if item.x is not None else float("inf"),
+                ))
+                return OCRDocument(
+                    text=self._clean_ocr_text(doc_text, preserve_lines=True),
+                    blocks=blocks,
+                    width=page_width or None,
+                    height=page_height or None,
+                )
+
+            response = cast(Any, client).text_detection(image=image, image_context=image_context)
+        except Exception as exc:
+            raise RuntimeError(f"Google Vision OCR 執行失敗: {exc}") from exc
+
+        if response.error.message:
+            raise RuntimeError(f"Google Vision OCR 錯誤: {response.error.message}")
+
+        if not response.text_annotations:
+            return OCRDocument(text="")
+
+        return OCRDocument(
+            text=self._clean_ocr_text(
+                response.text_annotations[0].description,
+                preserve_lines=True,
+            )
+        )
+
+
+google_vision_ocr_service = GoogleVisionOCRService()
