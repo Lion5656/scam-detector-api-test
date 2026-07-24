@@ -5,6 +5,7 @@
 """
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from backend.config import settings
 from backend.schemas.image import (
@@ -12,8 +13,9 @@ from backend.schemas.image import (
     ImagePriceResponse,
     ImageUploadResponse,
 )
-from backend.services.image_price_service.image_price_analyzer import \
-    image_price_analyzer
+from backend.services.image_price_service.image_price_analyzer import (
+    image_price_analyzer,
+)
 
 router = APIRouter(prefix="/v1", tags=["image-inference"])
 
@@ -71,7 +73,8 @@ async def analyze_image_price(file: UploadFile = File(...)) -> ImagePriceRespons
         if len(data) > settings.MAX_IMAGE_BYTES:
             raise HTTPException(status_code=400, detail="圖片大小不可超過 20MB")
 
-        result = image_price_analyzer.image_price_detector(
+        result = await run_in_threadpool(
+            image_price_analyzer.image_price_detector,
             data=data,
             filename=file.filename or "unknown",
             content_type=content_type,
@@ -82,16 +85,15 @@ async def analyze_image_price(file: UploadFile = File(...)) -> ImagePriceRespons
         return ImagePriceResponse(
             product_name=result.product_name if result.success else None,
             listed_price=result.listed_price if result.success else None,
+            online_price=result.market_price if result.success else None,
             seller_name=result.seller_name if result.success else None,
             risk_label=result.risk_label,
-            result=(
-                "完成商品價格風險檢測。"
-                if result.success
-                else result.message or "商品價格風險檢測失敗。"
-            ),
+            condition=result.condition,
+            extraction_confidence=result.extraction_confidence if result.success else None,
+            result=result.reason,
             debug=ImagePriceDebugInfo(
-                condition=result.condition,
-                extraction_confidence=result.extraction_confidence,
+                search_tool=result.search_tool,
+                market_price_source=result.market_price_source,
                 price_source_text=result.price_source_text,
                 warnings=warnings,
             ),

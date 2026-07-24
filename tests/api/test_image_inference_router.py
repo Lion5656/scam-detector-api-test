@@ -7,7 +7,6 @@ from backend.routers import image_price_validation
 from backend.services.dto.price_analysis import ImagePriceAnalysisResult
 from backend.services.image_price_service.models import MarketplaceCondition
 
-
 client_app = FastAPI()
 client_app.include_router(image_price_validation.router)
 client = TestClient(client_app)
@@ -23,14 +22,13 @@ def _analysis_result(**overrides) -> ImagePriceAnalysisResult:
         "listed_price": 10000,
         "market_price": 27900,
         "market_price_source": "online",
-        "is_high_risk_below_market": True,
+        "search_tool": "serp_api",
         "risk_label": "HIGH",
         "score": 90.0,
         "reason": "低於行情",
         "evidence": ["低於行情 50% 規則觸發"],
         "confidence": 0.8,
         "decision_layer": "llm_simulated",
-        "tool_observations": {},
         "seller_name": "Wei-Cheng Fang",
         "condition": MarketplaceCondition.USED,
         "extraction_confidence": 0.91,
@@ -62,14 +60,13 @@ def test_image_price_analysis_result_has_only_current_fields():
         "listed_price",
         "market_price",
         "market_price_source",
-        "is_high_risk_below_market",
         "risk_label",
         "score",
         "reason",
         "evidence",
         "confidence",
         "decision_layer",
-        "tool_observations",
+        "search_tool",
         "marketplace_layout",
         "marketplace_confidence",
         "extraction_confidence",
@@ -104,6 +101,7 @@ def test_analyze_image_price_maps_service_result_to_response(monkeypatch):
     assert set(payload) == {
         "product_name",
         "listed_price",
+        "online_price",
         "seller_name",
         "risk_label",
         "result",
@@ -111,11 +109,14 @@ def test_analyze_image_price_maps_service_result_to_response(monkeypatch):
     }
     assert payload["product_name"] == "Apple iPhone 15"
     assert payload["listed_price"] == 10000
+    assert payload["online_price"] == 27900
     assert payload["seller_name"] == "Wei-Cheng Fang"
     assert payload["risk_label"] == "HIGH"
-    assert payload["result"] == "完成商品價格風險檢測。"
+    assert payload["result"] == "低於行情"
     assert payload["debug"] == {
-        "condition": "USED",
+        "search_tool": "serp_api",
+        "market_price_source": "online",
+        "condition": "used",
         "extraction_confidence": 0.91,
         "price_source_text": "NT$13,000",
         "warnings": [],
@@ -135,10 +136,11 @@ def test_analyze_image_price_returns_clear_invalid_source_payload(monkeypatch):
             success=False,
             error_code="INVALID_IMAGE_SOURCE",
             message="圖片格式錯誤，來源需為 FB Marketplace 商品頁截圖",
+            reason="圖片格式錯誤，來源需為 FB Marketplace 商品頁截圖",
             listed_price=None,
             market_price=0,
             market_price_source="not_evaluated",
-            is_high_risk_below_market=False,
+            search_tool="unused",
             risk_label="UNKNOWN",
             score="未知",
         ),
@@ -156,7 +158,25 @@ def test_analyze_image_price_returns_clear_invalid_source_payload(monkeypatch):
     assert payload["seller_name"] is None
     assert payload["risk_label"] == "UNKNOWN"
     assert payload["result"] == "圖片格式錯誤，來源需為 FB Marketplace 商品頁截圖"
+    assert payload["debug"]["market_price_source"] == "not_evaluated"
+    assert payload["debug"]["search_tool"] == "unused"
     assert payload["debug"]["warnings"] == ["圖片格式錯誤，來源需為 FB Marketplace 商品頁截圖"]
+
+
+def test_analyze_image_price_exposes_search_tool(monkeypatch):
+    monkeypatch.setattr(
+        image_price_validation.image_price_analyzer,
+        "image_price_detector",
+        lambda **kwargs: _analysis_result(search_tool="ddgs"),
+    )
+
+    response = client.post(
+        "/v1/analyze/price",
+        files={"file": ("ad.png", b"fake-bytes", "image/png")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["debug"]["search_tool"] == "ddgs"
 
 
 def test_analyze_image_price_invalid_content_type():

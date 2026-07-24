@@ -10,7 +10,7 @@ class CaseRepository:
     def __init__(self, path: str | None = None):
         self._path = Path(path or settings.CASE_LOG_PATH)
 
-    def append_case(self, payload: dict) -> str:
+    def save(self, payload: dict) -> str:
         case_id = str(uuid4())
         envelope = {
             "case_id": case_id,

@@ -1,6 +1,7 @@
 """定義 OCR、商品頁驗證與刊登欄位抽取共用的資料模型。"""
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -34,7 +35,7 @@ class PriceSection(str, Enum):
 
 
 class OCRTextBlock(BaseModel):
-    """保存單一 OCR 文字區塊及其選用的版面座標與信心分數。"""
+    """保存單一 OCR 文字區塊及其座標。"""
 
     text: str
     x: float | None = None
@@ -45,7 +46,7 @@ class OCRTextBlock(BaseModel):
 
 
 class OCRDocument(BaseModel):
-    """保存 OCR 全文、文字區塊及選用的頁面尺寸。"""
+    """保存 OCR 全文、文字區塊與頁面尺寸。"""
 
     text: str
     blocks: list[OCRTextBlock] = Field(default_factory=list)
@@ -54,14 +55,21 @@ class OCRDocument(BaseModel):
 
     @property
     def has_coordinates(self) -> bool:
-        """所有文字區塊皆有水平與垂直座標時回傳真值。"""
+        """判斷所有文字區塊是否都有座標。"""
         return bool(self.blocks) and all(
             block.x is not None and block.y is not None
             for block in self.blocks
         )
 
 
-class MarketplaceDetectionResult(BaseModel):
+class ProductAgentResult(BaseModel):
+    """保存模型輸出、搜尋結果與工具錯誤。"""
+
+    output: dict[str, Any]
+    tool_results: list[dict[str, Any]]
+    tool_errors: list[str]
+
+class DetectionResult(BaseModel):
     """商品頁來源驗證與版型推定結果。"""
 
     is_marketplace: bool
@@ -88,7 +96,7 @@ class PriceCandidate(BaseModel):
 
 
 class MainPriceExtractionResult(BaseModel):
-    """刊登主價格、商品欄位及候選價格的完整抽取結果。"""
+    """保存 Marketplace 刊登欄位的抽取結果。"""
 
     price: int | None
     currency: str | None
@@ -108,9 +116,10 @@ class MainPriceExtractionResult(BaseModel):
 
 
 class MainPriceExtractionError(ValueError):
-    """表示主價格不存在或信心不足，並保留完整抽取結果。"""
+    """表示主價格不存在或擷取信心不足。"""
 
     def __init__(self, result: MainPriceExtractionResult):
+        """建立錯誤並保留原始擷取結果。"""
         if not result.error_code:
             raise ValueError("MainPriceExtractionError 必須包含 error_code")
         self.result = result

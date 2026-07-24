@@ -2,8 +2,8 @@ from pathlib import Path
 from typing import Any
 
 from backend.config import settings
-from backend.utils.text_cleaner import normalize_text
 from backend.rag.rag_context import RAGContext
+from backend.utils.text_cleaner import normalize_text
 
 
 def _get_vectorstore() -> Any:

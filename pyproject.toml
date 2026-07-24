@@ -29,7 +29,8 @@ dependencies = [
     "xgboost",
     "sqlalchemy",
     "pymysql",
-    "supabase>=2.31.0",
+    "tavily-python>=0.7.26",
+    "serpapi>=1.0.2",
 ]
 
 [dependency-groups]

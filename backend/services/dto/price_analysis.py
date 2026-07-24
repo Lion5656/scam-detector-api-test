@@ -4,10 +4,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.services.image_price_service.models import (
     MarketplaceCondition,
-    MarketplaceLayout 
+    MarketplaceLayout,
 )
+
 RiskLabel = Literal["LOW", "MEDIUM", "HIGH", "UNKNOWN"]
 DecisionLayer = Literal["fast", "llm", "llm_simulated", "source_validation"]
+MarketPriceSource = Literal["online", "fallback_local", "not_evaluated"]
+SearchTool = Literal["serp_api", "tavily", "ddgs", "unused"]
 
 
 class ImagePriceAnalysisResult(BaseModel):
@@ -25,13 +28,14 @@ class ImagePriceAnalysisResult(BaseModel):
     brand_model: str | None = None
     listed_price: int | None = Field(default=None, ge=0)
     market_price: int = Field(default=0, ge=0)
+    market_price_source: MarketPriceSource = "not_evaluated"
     risk_label: RiskLabel = "UNKNOWN"
-    has_risk: bool | None = None
     score: str | float | None = None
     reason: str | None = None
-    evidence: list[str] | None = None
+    evidence: list[str] = Field(default_factory=list)
     confidence: float | None = Field(default=None, ge=0, le=1)
     decision_layer: DecisionLayer = "fast"
+    search_tool: SearchTool = "unused"
     marketplace_layout: MarketplaceLayout = MarketplaceLayout.UNKNOWN
     marketplace_confidence: float = Field(default=0.0, ge=0, le=1)
     extraction_confidence: float | None = Field(default=None, ge=0, le=1)
@@ -43,8 +47,14 @@ class ImagePriceAnalysisResult(BaseModel):
 
 
 class ProductIdentification(BaseModel):
-    """商品辨識階段輸出的商品名稱、品牌型號與本地參考價格。"""
+    """商品辨識階段輸出的正規化資訊、查價搜尋詞與本地參考價格。"""
 
     product_name: str
     brand_model: str
+    known_specs: list[str] = Field(default_factory=list)
+    search_query: str = ""
     market_price: int = Field(default=0, ge=0)
+
+
+class OCRResponse(BaseModel):
+    extracted_text: str = Field(..., description="OCR 萃取文字")

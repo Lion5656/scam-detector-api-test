@@ -8,8 +8,12 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from backend.config import settings
 from backend.rag.rag_context import RAGContext
 from backend.rag.rag_retriever import is_rag_ready
-from backend.routers import (image_price_validation, phone_detection,
-                             text_inference, url_detection)
+from backend.routers import (
+    image_price_validation,
+    phone_detection,
+    text_inference,
+    url_detection,
+)
 from backend.services.text_service.base_classifier import base_classifier
 from backend.services.url_service.url_analyzer import detector
 

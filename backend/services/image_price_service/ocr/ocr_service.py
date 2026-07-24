@@ -12,15 +12,11 @@ from backend.config import settings
 from backend.services.image_price_service.models import OCRDocument, OCRTextBlock
 
 
-class GoogleVisionOCRService:
-    """擷取商品圖片的 OCR 全文、段落座標與頁面尺寸。
-
-    服務會使用設定的 Google 服務帳戶與語言提示，先呼叫文件文字偵測以保留
-    段落邊界框和閱讀順序；若未取得全文，再改用一般文字偵測並只回傳文字。
-    """
+class OCRService:
+    """透過 Google Vision 擷取文字與版面資訊。"""
     @staticmethod
     def _clean_ocr_text(text: str, *, preserve_lines: bool = False) -> str:
-        """正規化空白與常見英數辨識錯字，並依需求保留換行。"""
+        """整理 OCR 空白與常見英數辨識錯字。"""
         text = unicodedata.normalize("NFKC", text)
         text = re.sub(r"[\r\t]+", " ", text)
         if preserve_lines:
@@ -62,11 +58,11 @@ class GoogleVisionOCRService:
         return min(xs), min(ys), max(xs), max(ys)
 
     def extract_text(self, data: bytes) -> str:
-        """回傳保留閱讀行序的 OCR 全文，供只需要文字的呼叫端使用。"""
+        """從圖片取得 OCR 全文。"""
         return self.extract_document(data).text
 
     def extract_document(self, data: bytes) -> OCRDocument:
-        """將圖片轉成包含全文、段落座標與頁面尺寸的 OCR 文件。"""
+        """從圖片建立含版面資訊的 OCR 文件。"""
         provider = settings.OCR_PROVIDER.strip().lower()
         if provider not in {"google", "google_vision", "gcv"}:
             raise RuntimeError("OCR_PROVIDER 僅支援 google_vision")
@@ -74,11 +70,11 @@ class GoogleVisionOCRService:
         return self._extract_document_with_google_vision(data)
 
     def _extract_text_with_google_vision(self, data: bytes) -> str:
-        """透過 Google Vision 取得全文，保留此方法以相容既有呼叫端。"""
+        """透過 Google Vision 取得 OCR 全文。"""
         return self._extract_document_with_google_vision(data).text
 
     def _extract_document_with_google_vision(self, data: bytes) -> OCRDocument:
-        """呼叫 Google Vision，優先回傳含段落座標的文件 OCR 結果。"""
+        """呼叫 Google Vision 並整理 OCR 文件。"""
         try:
             from google.cloud import vision
         except ImportError as e:
@@ -155,4 +151,12 @@ class GoogleVisionOCRService:
         )
 
 
-google_vision_ocr_service = GoogleVisionOCRService()
+def extract_ocr_document(service: Any, data: bytes) -> OCRDocument:
+    """取得 OCR 文件並相容僅支援全文的服務。"""
+    extract_document = getattr(service, "extract_document", None)
+    if callable(extract_document):
+        return cast(OCRDocument, extract_document(data))
+    return OCRDocument(text=service.extract_text(data))
+
+
+ocr_service = OCRService()

@@ -3,25 +3,61 @@
 import re
 
 from backend.services.dto.price_analysis import ProductIdentification
-from backend.utils.pattern.image_text import (
-    GENERIC_MODEL_RE,
-    GENERIC_STOPWORDS,
-    KNOWN_BRANDS,
-    MODEL_PREFIX_STOPWORDS,
+
+_GENERIC_MODEL_RE = re.compile(
+    r"\b([a-z]{1,6}[\-\s]?[a-z0-9]{1,8}\d{2,5}[a-z0-9]{0,4})\b",
+    flags=re.IGNORECASE,
 )
+_KNOWN_BRANDS = {
+    "panasonic": "Panasonic",
+    "國際牌": "Panasonic",
+    "apple": "Apple",
+    "iphone": "Apple",
+    "ipad": "Apple",
+    "macbook": "Apple",
+    "airpods": "Apple",
+    "samsung": "Samsung",
+    "galaxy": "Samsung",
+    "sony": "Sony",
+    "playstation": "Sony",
+    "nintendo": "Nintendo",
+    "dyson": "Dyson",
+    "gopro": "GoPro",
+    "xiaomi": "Xiaomi",
+    "redmi": "Xiaomi",
+    "oppo": "OPPO",
+    "vivo": "vivo",
+    "realme": "realme",
+    "asus": "ASUS",
+    "acer": "Acer",
+    "hp": "HP",
+    "dell": "Dell",
+    "lenovo": "Lenovo",
+}
+_GENERIC_STOPWORDS = (
+    "商城",
+    "直送",
+    "運送",
+    "評價",
+    "已售出",
+    "加入購物車",
+    "直接購買",
+    "優惠",
+    "折",
+    "免運",
+    "蝦皮",
+    "momo",
+    "pchome",
+)
+_MODEL_PREFIX_STOPWORDS = ("sale", "price", "discount", "off", "nt", "twd")
 
 
 class PatternIdentifier:
-    """在不呼叫外部服務的情況下推定商品名稱、品牌與型號。
-
-    品牌名稱取自 ``KNOWN_BRANDS``，型號由英數格式規則擷取，商品名稱則從
-    OCR 文字中選擇不含介面停用詞的標題。無法辨識時回傳一般商品與未知型號；
-    此辨識器不負責提供市場參考價。
-    """
+    """以本地規則辨識商品名稱、品牌與型號。"""
     def _extract_brand(self, text: str) -> str | None:
         """依已知品牌關鍵字回傳標準化品牌名稱。"""
         lowered = text.lower()
-        for token, canonical in KNOWN_BRANDS.items():
+        for token, canonical in _KNOWN_BRANDS.items():
             if token in lowered or token in text:
                 return canonical
         return None
@@ -29,7 +65,7 @@ class PatternIdentifier:
     def _extract_generic_model(self, text: str) -> str | None:
         """擷取並排序可能的英數型號，排除價格與一般數字。"""
         candidates: list[str] = []
-        for m in GENERIC_MODEL_RE.finditer(text):
+        for m in _GENERIC_MODEL_RE.finditer(text):
             token = m.group(1).strip()
             token_norm = re.sub(r"\s+", "", token).upper()
 
@@ -39,7 +75,7 @@ class PatternIdentifier:
                 continue
             if token_norm.startswith(("NT", "TWD")):
                 continue
-            if token_norm.lower().startswith(MODEL_PREFIX_STOPWORDS):
+            if token_norm.lower().startswith(_MODEL_PREFIX_STOPWORDS):
                 continue
             if re.fullmatch(r"\d+[A-Z]?", token_norm):
                 continue
@@ -55,13 +91,16 @@ class PatternIdentifier:
 
     def _extract_generic_product_name(self, text: str, brand: str | None) -> str:
         """從 OCR 文字選出可能的商品標題，必要時補上品牌名稱。"""
-        cleaned = re.sub(r"\s+", " ", text).strip()
-        if not cleaned:
+        lines = [
+            re.sub(r"[^\S\r\n]+", " ", line).strip()
+            for line in text.splitlines()
+            if line.strip()
+        ]
+        if not lines:
             return f"{brand} 商品" if brand else "一般商品"
 
-        lines = [line.strip() for line in re.split(r"[\n\r]+", cleaned) if line.strip()]
         for line in lines[:6]:
-            if any(stop in line for stop in GENERIC_STOPWORDS):
+            if any(stop in line for stop in _GENERIC_STOPWORDS):
                 continue
 
             # 截斷價格與促銷欄位，只保留前方較接近商品標題的文字。
@@ -74,7 +113,7 @@ class PatternIdentifier:
         return f"{brand} 商品" if brand else "一般商品"
 
     def identify_product(self, text: str) -> ProductIdentification:
-        """將 OCR 文字轉成商品名稱與品牌型號，市場價固定回傳 0。"""
+        """將 OCR 文字轉成基本商品資訊。"""
         brand = self._extract_brand(text)
         model = self._extract_generic_model(text)
         product_name = self._extract_generic_product_name(text, brand)
@@ -82,7 +121,7 @@ class PatternIdentifier:
         if brand and model:
             brand_model = f"{brand} {model}"
         elif brand:
-            brand_model = f"{brand} 未知型號"
+            brand_model = f"{brand}"
         elif model:
             brand_model = model
         else:

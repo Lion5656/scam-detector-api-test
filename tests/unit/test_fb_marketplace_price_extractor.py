@@ -1,9 +1,9 @@
 import pytest
 
 from backend.services.image_price_service.models import (
+    DetectionResult,
     MainPriceExtractionError,
     MarketplaceCondition,
-    MarketplaceDetectionResult,
     OCRDocument,
     OCRTextBlock,
 )
@@ -84,6 +84,155 @@ def test_desktop_extracts_only_number_from_inventory_line():
     assert result.reason == "桌面版右側商品標題下方 NT$ 價格列"
 
 
+def test_discount_row_uses_first_price_when_ocr_combines_both_prices():
+    text = """Nike NBA Golden state warriors
+jersey , ( size 40 )
+NT$450 NT$900
+發送訊息給賣家
+說明
+賣家
+詳細內容
+狀況 二手・近全新"""
+    detection = DetectionResult(
+        is_marketplace=True,
+        layout="mobile",
+        confidence=0.9,
+        evidence=[],
+    )
+
+    result = FBMarketplacePriceExtractor().extract(
+        OCRDocument(text=text),
+        detection,
+    )
+
+    assert result.price == 450
+    assert result.source_text == "NT$450"
+    assert result.product_name == (
+        "Nike NBA Golden state warriors jersey, (size 40)"
+    )
+    assert [item.amount for item in result.candidates] == [450, 900]
+    assert result.reason == "同列出現多個 NT$ 價格，採用最左側價格"
+
+
+def test_multiline_title_uses_adjacent_coordinate_blocks():
+    document = OCRDocument(
+        text="""Nike NBA Golden state warriors
+jersey , ( size 40 )
+NT$450
+發送訊息給賣家
+說明
+賣家
+詳細內容
+狀況 二手・近全新""",
+        width=652,
+        height=2132,
+        blocks=[
+            OCRTextBlock(
+                text="GOLDEN STATE WARRIORS 30",
+                x=170,
+                y=320,
+                width=320,
+                height=120,
+            ),
+            OCRTextBlock(
+                text="Nike NBA Golden state warriors",
+                x=20,
+                y=810,
+                width=560,
+                height=55,
+            ),
+            OCRTextBlock(
+                text="jersey , ( size 40 )",
+                x=20,
+                y=865,
+                width=330,
+                height=55,
+            ),
+            OCRTextBlock(
+                text="NT$450",
+                x=20,
+                y=925,
+                width=120,
+                height=45,
+            ),
+            OCRTextBlock(text="發送訊息給賣家", x=20, y=1010, width=250, height=40),
+            OCRTextBlock(text="說明", x=20, y=1200, width=80, height=40),
+            OCRTextBlock(text="賣家", x=20, y=1500, width=80, height=40),
+            OCRTextBlock(text="詳細內容", x=20, y=1800, width=120, height=40),
+            OCRTextBlock(text="狀況 二手・近全新", x=20, y=1870, width=250, height=40),
+        ],
+    )
+    detection = DetectionResult(
+        is_marketplace=True,
+        layout="mobile",
+        confidence=0.9,
+        evidence=[],
+    )
+
+    result = FBMarketplacePriceExtractor().extract(document, detection)
+
+    assert result.product_name == (
+        "Nike NBA Golden state warriors jersey, (size 40)"
+    )
+    assert "GOLDEN STATE WARRIORS 30" not in result.product_name
+
+
+def test_discount_row_uses_leftmost_coordinate_not_ocr_block_order():
+    text = """Nike NBA Golden state warriors jersey (size 40)
+NT$900
+NT$450
+發送訊息給賣家
+說明
+賣家
+詳細內容
+狀況 二手・近全新"""
+    document = OCRDocument(
+        text=text,
+        width=652,
+        height=2132,
+        blocks=[
+            OCRTextBlock(
+                text="Nike NBA Golden state warriors jersey (size 40)",
+                x=20,
+                y=810,
+                width=520,
+                height=70,
+            ),
+            OCRTextBlock(
+                text="NT$900",
+                x=160,
+                y=900,
+                width=110,
+                height=42,
+            ),
+            OCRTextBlock(
+                text="NT$450",
+                x=20,
+                y=900,
+                width=110,
+                height=42,
+            ),
+            OCRTextBlock(text="發送訊息給賣家", x=20, y=970, width=250, height=40),
+            OCRTextBlock(text="說明", x=20, y=1200, width=80, height=40),
+            OCRTextBlock(text="賣家", x=20, y=1500, width=80, height=40),
+            OCRTextBlock(text="詳細內容", x=20, y=1800, width=120, height=40),
+            OCRTextBlock(text="狀況 二手・近全新", x=20, y=1870, width=250, height=40),
+        ],
+    )
+    detection = DetectionResult(
+        is_marketplace=True,
+        layout="mobile",
+        confidence=0.9,
+        evidence=[],
+    )
+
+    result = FBMarketplacePriceExtractor().extract(document, detection)
+
+    assert result.price == 450
+    assert result.source_text == "NT$450"
+    assert result.reason == "同列出現多個 NT$ 價格，採用最左側價格"
+
+
 def test_extracts_reference_listing_title_seller_and_used_condition_from_description():
     detector = FBMarketplaceDetector()
     document = OCRDocument(text=MACBOOK_TEXT)
@@ -104,7 +253,7 @@ def test_explicit_detail_condition_has_priority_over_description():
         "2020全新品購入，良好使用，無修無拆無換。",
         "全新未拆封",
     ) + "\n狀況 二手・近全新"
-    detection = MarketplaceDetectionResult(
+    detection = DetectionResult(
         is_marketplace=True,
         layout="mobile",
         confidence=0.9,
@@ -122,7 +271,7 @@ def test_missing_condition_defaults_to_new_with_lower_confidence_warning():
         "2020全新品購入，良好使用，無修無拆無換。",
         "歡迎私訊了解商品",
     )
-    detection = MarketplaceDetectionResult(
+    detection = DetectionResult(
         is_marketplace=True,
         layout="mobile",
         confidence=0.9,
@@ -134,6 +283,88 @@ def test_missing_condition_defaults_to_new_with_lower_confidence_warning():
     assert result.condition is MarketplaceCondition.NEW
     assert result.condition_confidence == 0.35
     assert result.warnings == ["未找到明確商品狀況，依規則預設為全新"]
+
+
+def test_detail_used_condition_overrides_title_full_new():
+    text = """Nintendo Switch OLED 全新未拆
+NT$9,500
+發送訊息給賣家
+說明
+狀況良好
+賣家
+王小明
+詳細內容
+狀況 二手"""
+    detection = DetectionResult(
+        is_marketplace=True,
+        layout="mobile",
+        confidence=0.9,
+        evidence=[],
+    )
+
+    result = FBMarketplacePriceExtractor().extract(
+        OCRDocument(text=text),
+        detection,
+    )
+
+    assert result.product_name == "Nintendo Switch OLED 全新未拆"
+    assert result.condition is MarketplaceCondition.USED
+    assert result.condition_confidence == 0.97
+
+
+def test_title_2hand_and_grade_condition_is_used():
+    text = """Sony PS5 2手 9成新
+NT$12,500
+發送訊息給賣家
+說明
+保存良好
+賣家
+王小明
+詳細內容
+地點 台北"""
+    detection = DetectionResult(
+        is_marketplace=True,
+        layout="mobile",
+        confidence=0.9,
+        evidence=[],
+    )
+
+    result = FBMarketplacePriceExtractor().extract(
+        OCRDocument(text=text),
+        detection,
+    )
+
+    assert result.product_name == "Sony PS5 2手 9成新"
+    assert result.condition is MarketplaceCondition.USED
+    assert result.condition_confidence == 0.99
+
+
+def test_detail_new_condition_on_separate_line_overrides_title_used():
+    text = """尼卡魯夫公仔 2手 9成新
+NT$1,725
+發送訊息給賣家
+賣家
+林佳錡
+詳細內容
+狀況
+全新
+地點
+台北市"""
+    detection = DetectionResult(
+        is_marketplace=True,
+        layout="mobile",
+        confidence=0.9,
+        evidence=[],
+    )
+
+    result = FBMarketplacePriceExtractor().extract(
+        OCRDocument(text=text),
+        detection,
+    )
+
+    assert result.product_name == "尼卡魯夫公仔 2手 9成新"
+    assert result.condition is MarketplaceCondition.NEW
+    assert result.condition_confidence == 0.97
 
 
 def test_non_marketplace_source_is_rejected():
@@ -185,7 +416,7 @@ def test_offer_range_only_never_becomes_main_price():
     with pytest.raises(MainPriceExtractionError) as exc_info:
         FBMarketplacePriceExtractor().extract(
             OCRDocument(text="6 offers from NT$8,000 to NT$13,000"),
-            MarketplaceDetectionResult(
+            DetectionResult(
                 is_marketplace=True,
                 layout="mobile",
                 confidence=0.8,
@@ -207,7 +438,7 @@ $13,000
 說明
 賣家
 詳細內容""")
-    detection = MarketplaceDetectionResult(
+    detection = DetectionResult(
         is_marketplace=True,
         layout="mobile",
         confidence=0.9,
@@ -229,14 +460,14 @@ def test_desktop_bbox_rejects_price_outside_right_information_panel():
         width=1848,
         height=878,
         blocks=[
-            OCRTextBlock("17Promax 銀256GB 台中面交 二手機可折優惠", x=1200, y=80, width=500, height=35),
-            OCRTextBlock("NT$39,500 · 有存貨", x=100, y=125, width=220, height=30),
-            OCRTextBlock("公開面交", x=1200, y=175, width=100, height=25),
-            OCRTextBlock("詳細資料", x=1200, y=270, width=100, height=25),
-            OCRTextBlock("狀況 二手・近全新", x=1200, y=320, width=250, height=25),
+            OCRTextBlock(text="17Promax 銀256GB 台中面交 二手機可折優惠", x=1200, y=80, width=500, height=35),
+            OCRTextBlock(text="NT$39,500 · 有存貨", x=100, y=125, width=220, height=30),
+            OCRTextBlock(text="公開面交", x=1200, y=175, width=100, height=25),
+            OCRTextBlock(text="詳細資料", x=1200, y=270, width=100, height=25),
+            OCRTextBlock(text="狀況 二手・近全新", x=1200, y=320, width=250, height=25),
         ],
     )
-    detection = MarketplaceDetectionResult(
+    detection = DetectionResult(
         is_marketplace=True,
         layout="desktop",
         confidence=0.9,
@@ -256,7 +487,7 @@ def test_low_confidence_main_price_raises_specific_exception():
     document = OCRDocument(text="""MacBook Pro 16 2019 i7 16/512
 分享
 NT$13,000""")
-    detection = MarketplaceDetectionResult(
+    detection = DetectionResult(
         is_marketplace=True,
         layout="mobile",
         confidence=0.8,

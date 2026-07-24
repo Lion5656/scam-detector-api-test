@@ -1,8 +1,7 @@
-from typing import Any, Dict, List, cast
+from typing import Any, cast
 
 from optimum.onnxruntime import ORTModelForSequenceClassification
-from transformers import (AutoTokenizer, Pipeline, PreTrainedTokenizerBase,
-                          pipeline)
+from transformers import AutoTokenizer, Pipeline, PreTrainedTokenizerBase, pipeline
 
 from backend.config import settings
 
@@ -13,13 +12,13 @@ class BaseClassifier:
     def __init__(self) -> None:
         self.classifier: Pipeline | None = None
         self.tokenizer: PreTrainedTokenizerBase | None = None
-        self.tochinese: Dict[str, str] = {
+        self.tochinese: dict[str, str] = {
             "LOW": "低風險",
             "MEDIUM": "中等風險",
             "HIGH": "高風險",
             "UNKNOWN": "未知風險",
         }
-        self.rank_map: Dict[str, int] = {
+        self.rank_map: dict[str, int] = {
             "高風險": 3,
             "中等風險": 2,
             "低風險": 1,
@@ -49,9 +48,9 @@ class BaseClassifier:
         self.tokenizer = tokenizer
         print("模型載入完成")
 
-    def _evaluate_distribution(self, result: List[Dict[str, Any]]) -> tuple[str, float | None, float]:
+    def _evaluate_distribution(self, result: list[dict[str, Any]]) -> tuple[str, float | None, float]:
         """評估模型輸出的分類分佈"""
-        dist: Dict[str, float] = {str(item["label"]): float(item["score"]) for item in result}
+        dist: dict[str, float] = {str(item["label"]): float(item["score"]) for item in result}
         sorted_dist = sorted(dist.items(), key=lambda x: x[1], reverse=True)
 
         top_label, top_score = sorted_dist[0]
@@ -88,7 +87,7 @@ class BaseClassifier:
         tokens = self.tokenizer.encode(text, truncation=True, add_special_tokens=False)
 
         if len(tokens) <= max_length:
-            result = cast(List[Dict[str, Any]], self.classifier(text, top_k=None))
+            result = cast(list[dict[str, Any]], self.classifier(text, top_k=None))
             label, confidence, margin = self._evaluate_distribution(result)
             return {
                 "label": label,
@@ -104,7 +103,7 @@ class BaseClassifier:
             chunks.append(chunk_text)
 
         results = cast(
-            List[List[Dict[str, Any]]],
+            list[list[dict[str, Any]]],
             self.classifier(chunks, truncation=True, max_length=max_length, top_k=None),
         )
 

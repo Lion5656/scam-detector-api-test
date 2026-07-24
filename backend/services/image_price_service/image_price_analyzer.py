@@ -1,21 +1,23 @@
 """協調商品圖片的來源驗證、價格抽取與風險分析流程。"""
 
 import logging
-from typing import Any, cast
+from typing import Any
 
 from backend.config import settings
 from backend.repository.case_repository import case_repository
-from backend.services.dto.price_analysis import (
-    DecisionLayer,
-    ImagePriceAnalysisResult,
-    RiskLabel,
-)
+from backend.services.dto.price_analysis import ImagePriceAnalysisResult
+from backend.services.image_price_service.case_recorder import record_case
 from backend.services.image_price_service.models import (
     MainPriceExtractionError,
     MainPriceExtractionResult,
     MarketplaceCondition,
     MarketplaceLayout,
-    OCRDocument,
+)
+from backend.services.image_price_service.ocr.ocr_service import (
+    extract_ocr_document,
+)
+from backend.services.image_price_service.ocr.ocr_service import (
+    ocr_service as default_ocr_service,
 )
 from backend.services.image_price_service.platform.fb_marketplace.fb_marketplace_detector import (
     fb_marketplace_detector,
@@ -23,169 +25,66 @@ from backend.services.image_price_service.platform.fb_marketplace.fb_marketplace
 from backend.services.image_price_service.platform.fb_marketplace.fb_marketplace_extractor import (
     fb_marketplace_price_extractor,
 )
+from backend.services.image_price_service.pricing.market_price_resolver import (
+    resolve_market_price,
+)
 from backend.services.image_price_service.pricing.online_marketprice_service import (
-    online_marketprice_service,
+    online_marketprice_service as default_online_price_service,
 )
 from backend.services.image_price_service.product.product_identifier import (
-    product_identifier,
+    product_identifier as default_product_identifier,
 )
-from backend.services.image_price_service.risk.fusion_decision_engine import fusion_decision_engine
-from backend.services.image_price_service.ocr.google_vision_ocr_service import google_vision_ocr_service
+from backend.services.image_price_service.risk.fusion_decision_engine import (
+    fusion_decision_engine as default_decision_engine,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class ImagePriceAnalyzer:
-    """執行商品頁截圖從 OCR 到風險決策的完整分析流程。
-
-    路由層傳入圖片內容、檔名與媒體類型後，即可將回傳的資料傳輸物件映射為
-    API 回應。OCR 文字僅供商品辨識、價格抽取、黑名單檢查及商品風險分析使用，
-    不會送入一般文字詐騙偵測流程。
-    """
+    """協調圖片 OCR、商品查價與風險判定流程。"""
 
     def __init__(
         self,
         *,
-        ocr_service = google_vision_ocr_service,
-        online_price_service = online_marketprice_service
-    ):
-        self._ocr_service = ocr_service or google_vision_ocr_service
+        ocr_service: Any | None = None,
+        product_identifier: Any | None = None,
+        online_price_service: Any | None = None,
+        decision_engine: Any | None = None,
+        case_repo: Any | None = None,
+        price_extractor: Any | None = None,
+        marketplace_detector: Any | None = None,
+    ) -> None:
+        """建立分析器並注入各階段使用的服務。"""
+        self._ocr_service = (
+            ocr_service if ocr_service is not None else default_ocr_service
+        )
+        self._product_identifier = (
+            product_identifier
+            if product_identifier is not None
+            else default_product_identifier
+        )
         self._online_price_service = (
-            online_price_service or online_marketprice_service
+            online_price_service
+            if online_price_service is not None
+            else default_online_price_service
         )
-
-        self._product_identifier = product_identifier
-        self._price_extractor = fb_marketplace_price_extractor
-        self._marketplace_detector = fb_marketplace_detector
-        self._decision_engine = fusion_decision_engine
-        self._case_repo = case_repository
-
-    def _resolve_market_price(
-        self,
-        product_name: str,
-        brand_model: str,
-        fallback_price: int,
-    ) -> int:
-        """取得線上市場價；查價停用或無有效結果時回傳本地參考價。"""
-        if settings.ONLINE_PRICE_ENABLED:
-            query = brand_model if brand_model != "未知型號" else product_name
-            online_price = self._online_price_service.estimate_taiwan_market_price(
-                query,
-                max_results=settings.ONLINE_PRICE_MAX_RESULTS,
-            )
-            if online_price > 0:
-                return online_price
-
-        return fallback_price
-
-    @staticmethod
-    def _has_price_risk(selling_price: int, market_price: int) -> bool:
-        """判斷正數售價是否低於市價五成，或達到市價兩倍以上。"""
-        return (
-            selling_price > 0
-            and market_price > 0
-            and (
-                selling_price < market_price * 0.5
-                or selling_price >= market_price * 2
-            )
+        self._decision_engine = (
+            decision_engine
+            if decision_engine is not None
+            else default_decision_engine
         )
-
-    @staticmethod
-    def _enforce_price_risk(
-        decision: dict[str, Any],
-        selling_price: int,
-        market_price: int,
-        is_high_risk: bool,
-    ) -> dict[str, Any]:
-        """將已觸發的價格異常規則套用至最終決策。
-
-        當售價低於市價五成或達到市價兩倍以上時，將標籤設為高風險、分數
-        提高至至少 90，並補上對應原因與證據，避免深度分析覆蓋硬性規則。
-        """
-        if not is_high_risk:
-            return decision
-
-        score = decision.get("risk_score")
-        enforced_score = max(float(score), 90.0) if isinstance(score, (int, float)) else 90.0
-        reason = str(decision.get("reason") or "")
-        if selling_price < market_price * 0.5:
-            price_reason = (
-                f"販售價格 {selling_price} 低於正常市價 {market_price} 的 50%，"
-                "判定為高風險低於行情"
-            )
-            price_evidence = "低於行情 50% 規則觸發"
-        else:
-            price_reason = (
-                f"販售價格 {selling_price} 達正常市價 {market_price} 的 2 倍以上，"
-                "判定為高風險高於行情"
-            )
-            price_evidence = "高於行情 2 倍規則觸發"
-
-        evidence = [str(item) for item in decision.get("evidence") or []]
-        if price_evidence not in evidence:
-            evidence.append(price_evidence)
-
-        return {
-            **decision,
-            "risk_label": "高風險",
-            "risk_score": enforced_score,
-            "reason": f"{reason}；{price_reason}" if reason else price_reason,
-            "evidence": evidence,
-        }
-
-    @staticmethod
-    def _normalize_risk_label(label: object) -> RiskLabel:
-        """將中英文風險標籤轉成 API 使用的標準值。"""
-        value = str(label or "").strip()
-        normalized = value.upper()
-        if normalized == "HIGH" or "高" in value:
-            return "HIGH"
-        if normalized == "MEDIUM" or "中" in value:
-            return "MEDIUM"
-        if normalized == "LOW" or "低" in value:
-            return "LOW"
-        return "UNKNOWN"
-
-    @staticmethod
-    def _normalize_decision_layer(layer: object) -> DecisionLayer:
-        """驗證決策層名稱，未知值一律降級為快速決策層。"""
-        value = str(layer or "fast").strip().lower()
-        if value in {"fast", "llm", "llm_simulated", "source_validation"}:
-            return cast(DecisionLayer, value)
-        return "fast"
-
-    def _store_case(self, result: ImagePriceAnalysisResult) -> str | None:
-        """依設定保存分析案例；寫入失敗時維持原分析結果。"""
-        if not settings.CASE_MEMORY_ENABLED:
-            return None
-
-        try:
-            return self._case_repo.append_case(
-                {
-                    "filename": result.filename,
-                    "content_type": result.content_type,
-                    "product_name": result.product_name,
-                    "brand_model": result.brand_model,
-                    "selling_price": result.listed_price,
-                    "market_price": result.market_price,
-                    "risk_label": result.risk_label,
-                    "has_risk": result.has_risk,
-                    "risk_score": result.score,
-                    "reason": result.reason,
-                    "confidence": result.confidence,
-                    "decision_layer": result.decision_layer,
-                    "extracted_text": result.extracted_text,
-                    "marketplace_layout": result.marketplace_layout,
-                    "marketplace_confidence": result.marketplace_confidence,
-                    "price_source_text": result.price_source_text,
-                    "price_extraction_reason": result.price_extraction_reason,
-                    "seller_name": result.seller_name,
-                    "condition": result.condition,
-                    "extraction_warnings": result.extraction_warnings,
-                }
-            )
-        except Exception:
-            pass
+        self._case_repo = case_repo if case_repo is not None else case_repository
+        self._price_extractor = (
+            price_extractor
+            if price_extractor is not None
+            else fb_marketplace_price_extractor
+        )
+        self._marketplace_detector = (
+            marketplace_detector
+            if marketplace_detector is not None
+            else fb_marketplace_detector
+        )
 
     @staticmethod
     def _error_result(
@@ -195,12 +94,12 @@ class ImagePriceAnalyzer:
         text: str,
         error_code: str,
         message: str,
-        layout: MarketplaceLayout,
+        layout: MarketplaceLayout | Any,
         evidence: list[str],
         marketplace_confidence: float = 0.0,
         extraction: MainPriceExtractionResult | None = None 
     ) -> ImagePriceAnalysisResult:
-        """建立來源驗證或欄位抽取失敗時使用的統一回應。"""
+        """建立圖片分析失敗時的統一回應。"""
         return ImagePriceAnalysisResult(
             filename=filename or "unknown",
             content_type=content_type,
@@ -212,12 +111,14 @@ class ImagePriceAnalyzer:
             brand_model=None,
             listed_price=None,
             market_price=0,
+            market_price_source="not_evaluated",
             risk_label="UNKNOWN",
             score="未知",
             reason=message,
             confidence=0.0,
             evidence=evidence,
             decision_layer="source_validation",
+            search_tool="unused",
             marketplace_layout=layout,
             marketplace_confidence=marketplace_confidence,
             extraction_confidence=extraction.confidence if extraction else None,
@@ -232,25 +133,14 @@ class ImagePriceAnalyzer:
             extraction_warnings=extraction.warnings if extraction else [],
         )
 
-    def _extract_ocr_document(self, data: bytes) -> OCRDocument:
-        """優先取得含座標的 OCR 文件，並相容僅能回傳全文的服務。"""
-        extract_document = self._ocr_service.extract_document
-        if callable(extract_document):
-            return extract_document(data)
-        return OCRDocument(text=self._ocr_service.extract_text(data))
-
     def image_price_detector(
         self,
         data: bytes,
         filename: str = "unknown",
         content_type: str = "",
     ) -> ImagePriceAnalysisResult:
-        """分析商品頁截圖並回傳路由層可直接映射的結果。
-
-        流程依序執行 OCR、來源版型驗證、刊登欄位抽取、商品辨識、市場查價、
-        價格異常檢查與風險決策；成功結果會依設定寫入案例記憶。
-        """
-        document = self._extract_ocr_document(data)
+        """分析 Marketplace 截圖並回傳價格風險結果。"""
+        document = extract_ocr_document(self._ocr_service, data)
         text = document.text
         detection = self._marketplace_detector.detect(document)
         if not detection.is_marketplace:
@@ -283,11 +173,11 @@ class ImagePriceAnalyzer:
                 extraction.error_code = extraction.error_code or "MAIN_PRICE_NOT_FOUND"
                 extraction.message = extraction.message or "找不到 FB Marketplace 商品主價格"
                 raise MainPriceExtractionError(extraction)
-        except MainPriceExtractionError as exc:
-            extraction = exc.result
+        except MainPriceExtractionError as e:
+            extraction = e.result
             logger.warning(
                 "主價格抽取失敗 error_code=%s confidence=%s candidates=%s rejected=%s",
-                exc.error_code,
+                e.error_code,
                 extraction.confidence,
                 [
                     {
@@ -312,8 +202,8 @@ class ImagePriceAnalyzer:
                 filename=filename,
                 content_type=content_type,
                 text=text,
-                error_code=exc.error_code,
-                message=str(exc),
+                error_code=e.error_code,
+                message=str(e),
                 layout=detection.layout,
                 marketplace_confidence=detection.confidence,
                 evidence=detection.evidence,
@@ -337,28 +227,45 @@ class ImagePriceAnalyzer:
 
         product_name = extraction.product_name
         product = self._product_identifier.identify(product_name)
-        market_price = self._resolve_market_price(
+        market_price, market_price_source, search_tool = resolve_market_price(
+            self._online_price_service,
             product_name,
             product.brand_model,
             product.market_price,
+            product.search_query,
+            condition=extraction.condition,
+            condition_text=product_name,
         )
         selling_price = extraction.price
 
-        has_risk = self._has_price_risk(selling_price, market_price)
-
-        decision = self._decision_engine.evaluate(
-            product_name=product_name,
-            brand_model=product.brand_model,
-            text=text,
-            selling_price=selling_price,
-            market_price=market_price,
-            has_risk=has_risk,
+        insufficient_search_results = (
+            settings.ONLINE_PRICE_ENABLED and search_tool == "unused"
         )
-        decision = self._enforce_price_risk(
-            decision,
-            selling_price,
-            market_price,
-            has_risk,
+        if insufficient_search_results:
+            decision = {
+                "risk_label": "UNKNOWN",
+                "risk_score": "未知",
+                "reason": "未知商品，搜索結果過少",
+                "evidence": ["線上查價結果不足"],
+                "confidence": 0.0,
+                "decision_layer": "source_validation",
+            }
+            resolved_condition = MarketplaceCondition.UNKNOWN
+        else:
+            decision = self._decision_engine.evaluate(
+                product_name=product_name,
+                brand_model=product.brand_model,
+                text=text,
+                selling_price=selling_price,
+                market_price=market_price,
+                market_price_source=market_price_source,
+            )
+            resolved_condition = extraction.condition
+        decision_evidence = decision.get("evidence")
+        evidence = (
+            [str(item) for item in decision_evidence]
+            if isinstance(decision_evidence, list)
+            else []
         )
         result = ImagePriceAnalysisResult(
             filename=filename or "unknown",
@@ -371,23 +278,25 @@ class ImagePriceAnalyzer:
             brand_model=product.brand_model,
             listed_price=selling_price,
             market_price=market_price,
-            has_risk=has_risk,
-            risk_label=self._normalize_risk_label(decision.get("risk_label")),
+            market_price_source=market_price_source,
+            risk_label=decision.get("risk_label", "UNKNOWN"),
             score=decision.get("risk_score"),
             reason=str(decision.get("reason") or ""),
+            evidence=evidence,
             confidence=float(decision.get("confidence") or 0.0),
-            decision_layer=self._normalize_decision_layer(decision.get("decision_layer")),
+            decision_layer=decision.get("decision_layer", "fast"),
+            search_tool=search_tool,
             marketplace_layout=detection.layout,
             marketplace_confidence=detection.confidence,
             extraction_confidence=extraction.confidence,
             price_source_text=extraction.source_text,
             price_extraction_reason=extraction.reason,
             seller_name=extraction.seller_name,
-            condition=extraction.condition,
+            condition=resolved_condition,
             extraction_warnings=extraction.warnings,
         )
 
-        self._store_case(result)
+        record_case(self._case_repo, result)
         return result
 
 

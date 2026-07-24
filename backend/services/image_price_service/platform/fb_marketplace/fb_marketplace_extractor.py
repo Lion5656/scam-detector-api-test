@@ -3,9 +3,9 @@
 import re
 
 from backend.services.image_price_service.models import (
+    DetectionResult,
     MainPriceExtractionError,
     MainPriceExtractionResult,
-    MarketplaceDetectionResult,
     MarketplaceCondition,
     MarketplaceLayout,
     OCRDocument,
@@ -13,7 +13,6 @@ from backend.services.image_price_service.models import (
     PriceCandidate,
     PriceSection,
 )
-
 
 _PRICE_RE = re.compile(
     r"(?P<currency>NT\s*\$|NTD|TWD|台幣|\$)\s*"
@@ -41,6 +40,7 @@ _UI_TERMS = (
 )
 _USED_TERMS = (
     "二手",
+    "2手",
     "中古",
     "近全新",
     "使用過",
@@ -50,16 +50,21 @@ _USED_TERMS = (
     "無修無拆",
 )
 _NEW_TERMS = ("全新", "未使用", "未拆封", "全新品")
+_USED_GRADE_RE = re.compile(
+    r"(?:[1-9](?:\.\d)?|10|[一二三四五六七八九十])成新",
+    flags=re.IGNORECASE,
+)
+_MAX_TITLE_LINES = 4
 
 
 class FBMarketplacePriceExtractor:
-    """從商品標題附近選出以 NT$ 開頭的單一主價格與其他刊登欄位。"""
+    """擷取 Marketplace 的標題、價格、賣家與品況。"""
 
     minimum_confidence = 0.65
 
     @staticmethod
     def _blocks(document: OCRDocument) -> list[OCRTextBlock]:
-        """將多行 OCR 區塊展開成單行，無區塊時以全文各行建立替代區塊。"""
+        """將 OCR 內容整理成單行文字區塊。"""
         if document.blocks:
             expanded: list[OCRTextBlock] = []
             for block in document.blocks:
@@ -91,6 +96,8 @@ class FBMarketplacePriceExtractor:
         text = re.sub(r"\s+", " ", text).strip(" ·|\t\r\n")
         text = re.sub(r"\s*/\s*", "/", text)
         text = re.sub(r"\s*-\s*", "-", text)
+        text = re.sub(r"\s+([,，.。;；:：!?！？)])", r"\1", text)
+        text = re.sub(r"([(（])\s+", r"\1", text)
         return text
 
     @staticmethod
@@ -120,13 +127,50 @@ class FBMarketplacePriceExtractor:
         )
 
     @staticmethod
+    def _is_adjacent_title_line(
+        document: OCRDocument,
+        earlier: OCRTextBlock,
+        later: OCRTextBlock,
+    ) -> bool:
+        """判斷兩個文字區塊是否為相鄰標題行。"""
+        if (
+            earlier.x is None
+            or earlier.y is None
+            or later.x is None
+            or later.y is None
+        ):
+            return True
+
+        horizontal_tolerance = max(
+            earlier.width or 0.0,
+            later.width or 0.0,
+            120.0,
+        )
+        if abs(earlier.x - later.x) > horizontal_tolerance:
+            return False
+
+        if earlier.y > later.y + max(later.height or 0.0, 8.0):
+            return False
+
+        vertical_gap = later.y - (
+            earlier.y + (earlier.height or 0.0)
+        )
+        maximum_gap = max(
+            (document.height or 0.0) * 0.04,
+            (earlier.height or 0.0) * 2,
+            (later.height or 0.0) * 2,
+            36.0,
+        )
+        return vertical_gap <= maximum_gap
+
+    @staticmethod
     def _position_score(
         layout: str,
         document: OCRDocument,
         title: OCRTextBlock | None,
         price: OCRTextBlock,
     ) -> tuple[float, str | None]:
-        """依標題與價格的相對座標加權，並回傳不合理位置的原因。"""
+        """依標題與價格位置計算候選分數。"""
         if not title or title.x is None or title.y is None or price.x is None or price.y is None:
             return 0.0, None
         if title is price:
@@ -157,15 +201,22 @@ class FBMarketplacePriceExtractor:
         """依新舊狀況關鍵字判定商品狀況。"""
         compact = re.sub(r"\s+", "", text).lower()
         # 二手關鍵字優先，避免「全新品購入，良好使用」被誤判為目前仍是新品。
-        if any(term in compact for term in _USED_TERMS):
+        if (
+            any(term in compact for term in _USED_TERMS)
+            or _USED_GRADE_RE.search(compact)
+        ):
             return MarketplaceCondition.USED
         if any(term in compact for term in _NEW_TERMS):
             return MarketplaceCondition.NEW
         return MarketplaceCondition.UNKNOWN
 
     @classmethod
-    def _extract_condition(cls, lines: list[str]) -> tuple[MarketplaceCondition, float, list[str]]:
-        """先讀取詳細資料的狀況欄，再以說明文字補充判定。"""
+    def _extract_condition(
+        cls,
+        lines: list[str],
+        product_title: str | None = None,
+    ) -> tuple[MarketplaceCondition, float, list[str]]:
+        """詳細資料品況優先，其次依標題、說明與預設規則判定。"""
         detail_start = next(
             (index for index, line in enumerate(lines) if cls._is_section_header(line, "詳細內容")
              or cls._is_section_header(line, "詳細資料")),
@@ -185,6 +236,11 @@ class FBMarketplacePriceExtractor:
                 condition = cls._condition_from_text(value)
                 if condition is not MarketplaceCondition.UNKNOWN:
                     return condition, 0.97, []
+
+        if product_title:
+            title_condition = cls._condition_from_text(product_title)
+            if title_condition is not MarketplaceCondition.UNKNOWN:
+                return title_condition, 0.99, []
 
         description_start = next(
             (index for index, line in enumerate(lines) if cls._is_section_header(line, "說明")),
@@ -237,14 +293,15 @@ class FBMarketplacePriceExtractor:
     def extract(
         self,
         document: OCRDocument,
-        detection: MarketplaceDetectionResult,
+        detection: DetectionResult,
     ) -> MainPriceExtractionResult:
-        """選出可信的刊登主價格，並一併回傳標題、賣家與商品狀況。"""
+        """擷取刊登主價格與相關商品欄位。"""
         blocks = self._blocks(document)
         lines = self._lines(document)
         candidates: list[PriceCandidate] = []
         rejected: list[PriceCandidate] = []
         candidate_titles: dict[int, str] = {}
+        candidate_positions: dict[int, tuple[float, float | None, float | None]] = {}
         current_section: PriceSection = PriceSection.UNKNOWN
 
         for index, block in enumerate(blocks):
@@ -254,7 +311,7 @@ class FBMarketplacePriceExtractor:
             line_section = self._section_for(text, current_section)
             matches = list(_PRICE_RE.finditer(text))
             lowered = text.lower()
-            is_range = len(matches) > 1 or any(term in lowered for term in _OFFER_TERMS)
+            is_range = any(term in lowered for term in _OFFER_TERMS)
 
             for match in matches:
                 amount = int(re.sub(r"\D", "", match.group("amount")))
@@ -274,20 +331,51 @@ class FBMarketplacePriceExtractor:
                     reject_reason = f"價格位於非主價格區塊：{section}"
 
                 title: OCRTextBlock | None = None
-                title_text: str | None = None
                 title_distance: int | None = None
+                title_fragments: list[str] = []
                 prefix = text[:match.start()].strip()
                 if self._looks_like_title(prefix):
                     title = block
-                    title_text = self._normalize_display_text(prefix)
                     title_distance = 0
-                else:
-                    for prior_index in range(index - 1, max(-1, index - 3), -1):
-                        if self._looks_like_title(blocks[prior_index].text):
-                            title = blocks[prior_index]
-                            title_text = self._normalize_display_text(title.text)
-                            title_distance = index - prior_index
+                    title_fragments.append(
+                        self._normalize_display_text(prefix)
+                    )
+
+                found_title = title is not None
+                adjacent_block = title or block
+                for prior_index in range(
+                    index - 1,
+                    max(-1, index - _MAX_TITLE_LINES - 1),
+                    -1,
+                ):
+                    prior_block = blocks[prior_index]
+                    if not self._looks_like_title(prior_block.text):
+                        if found_title:
                             break
+                        continue
+                    if found_title and not self._is_adjacent_title_line(
+                        document,
+                        prior_block,
+                        adjacent_block,
+                    ):
+                        break
+
+                    title_fragments.append(
+                        self._normalize_display_text(prior_block.text)
+                    )
+                    if title is None:
+                        title = prior_block
+                        title_distance = index - prior_index
+                    found_title = True
+                    adjacent_block = prior_block
+
+                title_text = (
+                    self._normalize_display_text(
+                        " ".join(reversed(title_fragments))
+                    )
+                    if title_fragments
+                    else None
+                )
 
                 if title is None and reject_reason is None:
                     reject_reason = "價格附近找不到 Marketplace 商品標題"
@@ -330,6 +418,19 @@ class FBMarketplacePriceExtractor:
                 )
                 if title_text:
                     candidate_titles[id(candidate)] = title_text
+                if block.x is not None:
+                    horizontal_position = block.x
+                    if block.width and text:
+                        horizontal_position += (
+                            block.width * match.start() / len(text)
+                        )
+                else:
+                    horizontal_position = float(match.start())
+                candidate_positions[id(candidate)] = (
+                    horizontal_position,
+                    block.y,
+                    block.height,
+                )
                 (rejected if reject_reason else candidates).append(candidate)
 
             # 出價範圍只套用於命中關鍵字的當行，避免圖片中的英文「from」讓
@@ -339,16 +440,49 @@ class FBMarketplacePriceExtractor:
 
         accepted = [candidate for candidate in candidates if candidate.confidence >= self.minimum_confidence]
         seller_name, seller_confidence = self._extract_seller_name(lines)
-        condition, condition_confidence, warnings = self._extract_condition(lines)
-        if seller_name is None:
-            warnings.append("找不到賣家區塊中的顯示名稱")
 
         if accepted:
             accepted.sort(key=lambda item: (-item.confidence, item.block_index))
             selected = accepted[0]
+            _, selected_y, selected_height = candidate_positions[
+                id(selected)
+            ]
+            same_row_candidates: list[PriceCandidate] = []
+            for candidate in accepted:
+                _, candidate_y, candidate_height = candidate_positions[
+                    id(candidate)
+                ]
+                if candidate.block_index == selected.block_index:
+                    same_row_candidates.append(candidate)
+                    continue
+                if selected_y is None or candidate_y is None:
+                    continue
+                row_tolerance = max(
+                    selected_height or 0.0,
+                    candidate_height or 0.0,
+                    (document.height or 0.0) * 0.01,
+                    8.0,
+                )
+                if abs(candidate_y - selected_y) <= row_tolerance:
+                    same_row_candidates.append(candidate)
+
+            has_multiple_prices_on_row = len(same_row_candidates) > 1
+            if has_multiple_prices_on_row:
+                selected = min(
+                    same_row_candidates,
+                    key=lambda item: (
+                        candidate_positions[id(item)][0],
+                        item.block_index,
+                    ),
+                )
             product_name = candidate_titles.get(id(selected))
+            condition, condition_confidence, warnings = (
+                self._extract_condition(lines, product_name)
+            )
             if not product_name:
                 warnings.append("找不到主價格上方的 Marketplace 商品標題")
+            if seller_name is None:
+                warnings.append("找不到賣家區塊中的顯示名稱")
             title_confidence = 0.95 if product_name else 0.0
             overall_confidence = min(1.0, (
                 selected.confidence * 0.55
@@ -356,11 +490,14 @@ class FBMarketplacePriceExtractor:
                 + seller_confidence * 0.15
                 + condition_confidence * 0.15
             ))
-            reason = (
-                "商品標題正下方的第一個 NT$ 單一價格"
-                if detection.layout == "mobile"
-                else "桌面版右側商品標題下方 NT$ 價格列"
-            )
+            if has_multiple_prices_on_row:
+                reason = "同列出現多個 NT$ 價格，採用最左側價格"
+            else:
+                reason = (
+                    "商品標題正下方的第一個 NT$ 單一價格"
+                    if detection.layout == "mobile"
+                    else "桌面版右側商品標題下方 NT$ 價格列"
+                )
             return MainPriceExtractionResult(
                 price=selected.amount,
                 currency=selected.currency,
@@ -377,6 +514,11 @@ class FBMarketplacePriceExtractor:
                 warnings=warnings,
             )
 
+        condition, condition_confidence, warnings = self._extract_condition(
+            lines
+        )
+        if seller_name is None:
+            warnings.append("找不到賣家區塊中的顯示名稱")
         low_confidence = bool(candidates)
         error_result = MainPriceExtractionResult(
             price=None,

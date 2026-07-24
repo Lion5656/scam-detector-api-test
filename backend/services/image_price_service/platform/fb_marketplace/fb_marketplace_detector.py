@@ -3,11 +3,10 @@
 import re
 
 from backend.services.image_price_service.models import (
-    MarketplaceDetectionResult,
+    DetectionResult,
     MarketplaceLayout,
     OCRDocument,
 )
-
 
 _PRICE_RE = re.compile(
     r"(?:NT\s*\$|NTD|TWD|台幣|\$)\s*[1-9]\d{0,6}(?:\s*[,，]\s*\d{3})*",
@@ -16,12 +15,7 @@ _PRICE_RE = re.compile(
 
 
 class FBMarketplaceDetector:
-    """依標題、價格與結構化欄位驗證商品頁並推定版型。
-
-    驗證不依賴 Facebook 標誌、Marketplace 標誌或訊息按鈕。標題與價格為必要
-    訊號，且詳細資料、商品狀況或賣家資訊至少須出現一項；類別名稱保留供既有
-    呼叫端使用。
-    """
+    """驗證 Marketplace 商品頁並判斷版型。"""
 
     threshold = 0.60
 
@@ -89,11 +83,11 @@ class FBMarketplaceDetector:
             return MarketplaceLayout.MOBILE
         return MarketplaceLayout.UNKNOWN
 
-    def detect(self, document: OCRDocument) -> MarketplaceDetectionResult:
-        """計算來源信心分數，並回傳是否可視為 Marketplace 商品頁。"""
+    def detect(self, document: OCRDocument) -> DetectionResult:
+        """判斷 OCR 文件是否為 Marketplace 商品頁。"""
         text = document.text.strip()
         if not text:
-            return MarketplaceDetectionResult(
+            return DetectionResult(
                 is_marketplace=False,
                 layout=MarketplaceLayout.UNKNOWN,
                 confidence=0.0,
@@ -137,7 +131,7 @@ class FBMarketplaceDetector:
             else "商品頁缺少標題、價格或詳細資料／狀況／賣家資訊"
         )
 
-        return MarketplaceDetectionResult(
+        return DetectionResult(
             is_marketplace=is_marketplace,
             layout=layout if is_marketplace else MarketplaceLayout.UNKNOWN,
             confidence=confidence,

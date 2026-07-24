@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.services.dto.price_analysis import MarketPriceSource, SearchTool
 from backend.services.image_price_service.models import MarketplaceCondition
 
 
@@ -15,8 +16,8 @@ class ImageUploadResponse(BaseModel):
 class ImagePriceDebugInfo(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    condition: MarketplaceCondition | None = None
-    extraction_confidence: float | None = Field(default=None, ge=0, le=1)
+    search_tool: SearchTool = "unused"
+    market_price_source: MarketPriceSource = "not_evaluated"
     price_source_text: str | None = None
     warnings: list[str] = Field(default_factory=list)
 
@@ -25,12 +26,11 @@ class ImagePriceResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     product_name: str | None = None
+    condition: MarketplaceCondition | None = None
     listed_price: int | None = Field(default=None, ge=0)
+    online_price: int | None = Field(default=None, ge=0)
     seller_name: str | None = None
     risk_label: Literal["LOW", "MEDIUM", "HIGH", "UNKNOWN"]
-    result: str
+    result: str | None = None
+    extraction_confidence: float | None = Field(default=None, ge=0, le=1)
     debug: ImagePriceDebugInfo | None = None
-
-
-class OCRResponse(BaseModel):
-    extracted_text: str = Field(..., description="OCR 萃取文字")

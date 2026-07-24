@@ -41,14 +41,22 @@ class Settings(BaseSettings):
     EMBED_MODEL: str = "BAAI/bge-small-zh-v1.5"
     
     PRODUCT_MODEL_NAME: str = "qwen/qwen3.6-27b"
+    TAVILY_SEARCH_API_KEY: SecretStr = SecretStr("")
+    SERP_API_KEY: SecretStr = SecretStr("")
+    SEARCH_COUNTRY: str = "taiwan"
+
     ALLOWED_IMAGE_TYPES : set[str] = {"image/jpeg", "image/png", "image/webp"}
     MAX_IMAGE_BYTES : int = 20 * 1024 * 1024  # 20MB
     MARKET_PRICE_DB_PATH: str = str(ROOT_DIR / "data" / "market_prices_tw.json")
     ONLINE_PRICE_ENABLED: bool = True
-    ONLINE_PRICE_MAX_RESULTS: int = 8
-    ONLINE_PRICE_SITES: str = "momo.com.tw,pchome.com.tw,shopee.tw,tw.buy.yahoo.com"
-    ONLINE_PRICE_MIN_SITES: int = 2
+    ONLINE_PRICE_MAX_RESULTS: int = 10
+    SEARCH_DOMAIN: list[str] = ["biggo.com.tw", "momo.com.tw", "pchome.com.tw", "shopee.tw", "ruten.com.tw", "tw.carousell.com"]
+    EXCLUDE_DOMAIN: list[str] = ["zh.wikipedia.org"]
+    ONLINE_PRICE_MIN_SITES: int = 1
     ONLINE_PRICE_MIN_PRICE_POINTS: int = 3
+    ONLINE_PRICE_FALLBACK_DELAY_SECONDS: float = 2.0
+    GROQ_FALLBACK_RETRY_DELAY_SECONDS: float = 2.0
+    GROQ_RATE_LIMIT_MAX_WAIT_SECONDS: float = 30.0
     PRODUCT_MATCH_FUZZY_MIN_SCORE: int = 86
     ENABLE_INTELLIGENT_LAYER: bool = True
     INTELLIGENT_CONFIDENCE_THRESHOLD: float = 0.82
@@ -57,6 +65,7 @@ class Settings(BaseSettings):
     CASE_MEMORY_ENABLED: bool = True
     OCR_PROVIDER: str = "google_vision"
     GCV_LANGUAGE_HINTS: str = "zh-TW,en"
+    GCP_OCR_SERVICE_ACCOUNT_JSON : str = ""
 
     DB_USERNAME: str = ""
     DB_PASSWORD: str = ""
@@ -65,8 +74,6 @@ class Settings(BaseSettings):
     DB_NAME: str = ""
     DB_TIMEOUT: int = 10
     DB_SSL_CA: str = "ca.pem"
-
-    GCP_OCR_SERVICE_ACCOUNT_JSON : str = ""
 
     GROQ_API_KEY: SecretStr = SecretStr("")
     model_config = SettingsConfigDict(

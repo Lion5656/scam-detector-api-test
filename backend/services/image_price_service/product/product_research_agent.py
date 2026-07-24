@@ -1,8 +1,13 @@
-"""使用語言模型與網路搜尋工具補足商品識別資訊。"""
+"""提供商品市價搜尋工具，以及協調 Groq 工具呼叫與結構化輸出的代理。"""
 
+import json
+import logging
 import os
-from collections.abc import Sequence
+import re
+import time
+from typing import Any, Literal
 
+import serpapi
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     BaseMessage,
@@ -13,149 +18,493 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import BaseTool, tool
 from langchain_groq import ChatGroq
-from pydantic import SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from tavily import TavilyClient
 
 from backend.config import settings
+from backend.services.image_price_service.models import ProductAgentResult
+
+logger = logging.getLogger(__name__)
 
 
-PRODUCT_RESEARCH_SYSTEM_PROMPT = """
-    你是一個商品識別助手，負責從 OCR 文字判斷商品名稱、品牌與型號。
+class GroqRateLimitError(RuntimeError):
+    """Groq 請求速率限制。"""
 
-    只有在下列情況才能使用搜尋工具：
-    1. OCR 文字沒有足夠資訊可以識別具體商品。
-    2. 需要外部資料確認型號與商品之間的關係。
+    def __init__(self, retry_after_seconds: float) -> None:
+        """保存建議等待秒數。"""
+        self.retry_after_seconds = max(0.0, retry_after_seconds)
+        super().__init__(
+            "Groq rate limit reached"
+            f" (retry_after={self.retry_after_seconds:.1f}s)"
+        )
 
-    如果輸入已經包含明確的商品名稱、品牌與型號，請直接回答，不要使用搜尋工具。
-    無法確認的資訊不可自行推測或捏造。
 
-    最終答案必須嚴格使用以下格式，不要加入額外說明：
-    product_name: <商品名稱；無法識別時填寫「未知商品」>
-    brand_model: <品牌與型號；無法識別時填寫「未知品牌型號」>
-""".strip()
+class MarketPriceEvidence(BaseModel):
+    """單筆可由搜尋結果驗證的商品價格。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # 價格合理性由 OnlineMarketPriceService 逐筆判斷。這裡只驗證型別，
+    # 避免單筆過低或過高的搜尋結果讓整批 Groq JSON 驗證失敗。
+    price: int
+    currency: Literal["TWD", "NTD", "NT$", "台幣", "新台幣"]
+    url: str
+    evidence: str
+    condition: Literal["new", "used", "unknown"]
+    product_match: bool
+
+
+class MarketPriceSearchOutput(BaseModel):
+    """Groq 整理搜尋結果後必須回傳的結構。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prices: list[MarketPriceEvidence] = Field(default_factory=list)
+
+
+@tool
+def search_market_prices_serpapi(
+    query: str,
+    max_results: int = 10,
+) -> list[dict[str, str]]:
+    """透過 SerpApi 搜尋並回傳標準化結果。"""
+    api_key = (
+        settings.SERP_API_KEY.get_secret_value()
+        or os.getenv("SERP_API_KEY", "")
+    )
+    if not api_key:
+        raise RuntimeError("尚未設定 SERP_API_KEY")
+
+    client = serpapi.Client(api_key=api_key, timeout=60)
+    response = client.search(
+        {
+            "engine": "google_light",
+            "q": query,
+            "google_domain": "google.com.tw",
+            "hl": "zh-tw",
+            "gl": "tw",
+        }
+    )
+    if isinstance(response, str):
+        response_data = json.loads(response)
+    elif isinstance(response, dict):
+        response_data = response
+    elif hasattr(response, "as_dict"):
+        response_data = response.as_dict()
+    else:
+        response_data = dict(response)
+    if not isinstance(response_data, dict):
+        raise TypeError("SerpApi 回傳格式不是 JSON 物件")
+    if response_data.get("error"):
+        raise RuntimeError(str(response_data["error"]))
+
+    organic_results = response_data.get("organic_results", [])
+    if not isinstance(organic_results, list):
+        return []
+
+    results = [
+        {
+            "title": str(item.get("title", "")).strip(),
+            "link": str(item.get("link", "")).strip(),
+            "snippet": str(item.get("snippet", "")).strip(),
+        }
+        for item in organic_results[:max_results]
+        if isinstance(item, dict)
+        if str(item.get("link", "")).strip()
+    ]
+    return results
+
+
+@tool
+def search_market_prices_ddgs(
+    query: str,
+    max_results: int = 10,
+) -> list[dict[str, str]]:
+    """透過 DuckDuckGo 搜尋並回傳標準化結果。"""
+    from ddgs import DDGS
+
+    with DDGS() as ddgs:
+        raw_results = list(
+            ddgs.text(
+                query,
+                region="tw-tzh",
+                safesearch="off",
+                max_results=max_results,
+            )
+        )
+    results = [
+        {
+            "title": str(item.get("title", "")).strip(),
+            "link": str(item.get("href", "")).strip(),
+            "snippet": str(item.get("body", "")).strip(),
+        }
+        for item in raw_results
+        if str(item.get("href", "")).strip()
+    ]
+    return results
+
+
+@tool
+def search_market_prices_tavily(
+    query: str,
+    max_results: int = 10,
+) -> list[dict[str, str]]:
+    """透過 Tavily 搜尋並回傳標準化結果。"""
+    api_key = settings.TAVILY_SEARCH_API_KEY.get_secret_value() or os.getenv(
+        "TAVILY_SEARCH_API_KEY",
+        "",
+    )
+    if not api_key:
+        raise RuntimeError("尚未設定 TAVILY_SEARCH_API_KEY")
+
+    response = TavilyClient(api_key=api_key).search(
+        query=query,
+        max_results=max_results,
+        country=settings.SEARCH_COUNTRY,
+        include_domains=settings.SEARCH_DOMAIN,
+        exclude_domains=settings.EXCLUDE_DOMAIN,
+    )
+    results = [
+        {
+            "title": str(item.get("title", "")).strip(),
+            "link": str(item.get("url", "")).strip(),
+            "snippet": str(item.get("content", "")).strip(),
+        }
+        for item in response.get("results", [])
+        if str(item.get("url", "")).strip()
+    ]
+    return results
 
 
 class ProductResearchAgent:
-    """讓語言模型辨識商品，並依模型要求執行一輪搜尋工具呼叫。"""
+    """協調搜尋工具與 Groq 結構化輸出。"""
 
     def __init__(
         self,
         llm: BaseChatModel,
-        tools: Sequence[BaseTool],
-        system_prompt: str = PRODUCT_RESEARCH_SYSTEM_PROMPT,
+        tools: list[BaseTool] | None = None,
     ) -> None:
-        """綁定語言模型、可用搜尋工具與商品識別系統提示。"""
-        tool_list = list(tools)
-        if not tool_list:
-            raise ValueError("ProductResearchAgent 至少需要一個搜尋工具")
-
+        """建立代理並註冊可用搜尋工具。"""
         self._llm = llm
         self._tools_by_name = {
-            search_tool.name: search_tool for search_tool in tool_list
+            search_tool.name: search_tool
+            for search_tool in (tools or [])
         }
-        self._llm_with_tools = llm.bind_tools(tool_list, tool_choice="auto")
-        self._system_prompt = system_prompt
 
-    def run(self, prompt: str) -> str:
-        """
-            執行商品識別；有工具請求時加入搜尋結果後再取得最終回答\n
-            SystemMessage：商品識別規則\n
-            HumanMessage：原始 OCR 內容\n
-            AIMessage：第一次 Groq 的搜尋工具請求\n
-            ToolMessage：Google/DuckDuckGo 搜尋結果
-        """
-        messages: list[BaseMessage] = [
-            SystemMessage(content=self._system_prompt),
-            HumanMessage(content=prompt),
-        ]
+    def complete_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, Any]:
+        """呼叫模型並解析 JSON 回覆。"""
+        response = self._llm.invoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt),
+            ]
+        )
+        return self._parse_json_object(self._message_text(response))
 
-        response = self._llm_with_tools.invoke(messages) # 第一次呼叫groq，判斷是否使用搜索工具
+    def online_price_search(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        allowed_tool_names: list[str],
+    ) -> ProductAgentResult:
+        """執行指定搜尋工具並由 Groq 整理價格。"""
+        if len(allowed_tool_names) != 1:
+            raise ValueError("每次價格搜尋必須指定一個搜尋工具")
 
-        if not response.tool_calls:
-            return str(response.text)
+        tool_name = allowed_tool_names[0]
+        if tool_name not in self._tools_by_name:
+            raise ValueError(f"找不到指定的搜尋工具：{tool_name}")
 
-        messages.append(response)
-        for tool_call in response.tool_calls:
-            messages.append(self._execute_tool(tool_call))
+        request = self._parse_json_object(user_prompt)
+        query = str(request.get("product_query", "")).strip()
+        try:
+            max_results = int(request.get("max_results", 10))
+        except (TypeError, ValueError) as error:
+            raise ValueError("max_results 必須是整數") from error
+        if not query or max_results <= 0:
+            raise ValueError("價格搜尋需要有效的 product_query 與 max_results")
 
-        final_response = self._llm.invoke(messages) # 第二次呼叫groq，使用搜索工具
-        return str(final_response.text)
+        direct_tool_call: ToolCall = {
+            "name": tool_name,
+            "args": {
+                "query": query,
+                "max_results": max_results,
+            },
+            "id": f"direct-{tool_name}",
+            "type": "tool_call",
+        }
+        _, tool_results, tool_error = self._execute_tool(
+            direct_tool_call,
+            allowed_tool_names,
+        )
 
-    def _execute_tool(self, tool_call: ToolCall) -> ToolMessage:
-        """執行單一工具請求，並回傳帶有請求識別碼與狀態的訊息。"""
-        tool_name = tool_call["name"]
-        selected_tool = self._tools_by_name.get(tool_name)
-
-        if selected_tool is None:
-            return ToolMessage(
-                content=f"找不到指定的工具：{tool_name}",
-                tool_call_id=tool_call["id"],
-                status="error",
+        if tool_error:
+            logger.warning(
+                "price search tool failed: %s",
+                tool_error,
+            )
+            return ProductAgentResult(
+                output={"prices": []},
+                tool_results=[],
+                tool_errors=[tool_error],
             )
 
+        messages: list[BaseMessage] = [
+            HumanMessage(
+                content=json.dumps(
+                    {
+                        "instruction": system_prompt,
+                        "request": request,
+                        "search_results": tool_results,
+                        "required_output_schema": (
+                            MarketPriceSearchOutput.model_json_schema()
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        ]
+        parsed = self._generate_price_output(messages, tool_name)
+
+        return ProductAgentResult(
+            output=parsed.model_dump(),
+            tool_results=tool_results,
+            tool_errors=[],
+        )
+
+    def _generate_price_output(
+        self,
+        messages: list[BaseMessage],
+        tool_name: str,
+    ) -> MarketPriceSearchOutput:
+        """產生價格 JSON，必要時執行一次降級重試。"""
+        structured_llm = self._llm.with_structured_output(
+            MarketPriceSearchOutput,
+            method="json_mode",
+            include_raw=True,
+            reasoning_format="hidden",
+            reasoning_effort="none",
+        )
+        json_mode_error: BaseException | None = None
         try:
-            result = selected_tool.invoke(tool_call["args"])
-            return ToolMessage(
-                content=str(result),
-                tool_call_id=tool_call["id"],
-                status="success",
+            structured_result = structured_llm.invoke(messages)
+            if isinstance(structured_result, dict):
+                parsed = structured_result.get("parsed")
+                if isinstance(parsed, MarketPriceSearchOutput):
+                    return parsed
+                parsing_error = structured_result.get("parsing_error")
+                if isinstance(parsing_error, BaseException):
+                    json_mode_error = parsing_error
+            if json_mode_error is None:
+                json_mode_error = ValueError("missing structured output")
+        except Exception as error:
+            json_mode_error = error
+
+        retry_after = self._rate_limit_retry_after(json_mode_error)
+        if retry_after is not None:
+            if retry_after > settings.GROQ_RATE_LIMIT_MAX_WAIT_SECONDS:
+                logger.warning(
+                    "Groq rate limited tool=%s retry_after=%.1fs; "
+                    "text fallback skipped",
+                    tool_name,
+                    retry_after,
+                )
+                raise GroqRateLimitError(retry_after) from json_mode_error
+            retry_delay = max(
+                retry_after,
+                settings.GROQ_FALLBACK_RETRY_DELAY_SECONDS,
+            )
+            logger.warning(
+                "Groq rate limited tool=%s retry_after=%.1fs; "
+                "retrying text mode in %.1fs",
+                tool_name,
+                retry_after,
+                retry_delay,
+            )
+        else:
+            retry_delay = settings.GROQ_FALLBACK_RETRY_DELAY_SECONDS
+            logger.warning(
+                "Groq JSON mode failed tool=%s error=%s; "
+                "retrying text mode in %.1fs",
+                tool_name,
+                str(json_mode_error),
+                retry_delay,
+            )
+        if retry_delay > 0:
+            time.sleep(retry_delay)
+
+        fallback_llm = self._llm.bind(
+            reasoning_format="hidden",
+            reasoning_effort="none",
+        )
+        try:
+            fallback_response = fallback_llm.invoke(messages)
+        except Exception as error:
+            fallback_retry_after = self._rate_limit_retry_after(error)
+            if fallback_retry_after is not None:
+                logger.warning(
+                    "Groq text fallback rate limited tool=%s "
+                    "retry_after=%.1fs",
+                    tool_name,
+                    fallback_retry_after,
+                )
+                raise GroqRateLimitError(
+                    fallback_retry_after
+                ) from error
+            raise
+        fallback_text = self._message_text(fallback_response)
+        try:
+            fallback_output = self._parse_json_object(fallback_text)
+            return MarketPriceSearchOutput.model_validate(fallback_output)
+        except Exception as error:
+            logger.warning(
+                "Groq price output failed tool=%s error=%s response=%r",
+                tool_name,
+                str(error),
+                fallback_text[:500],
+            )
+            raise ValueError("Groq 未回傳有效的價格結構") from error
+
+    @staticmethod
+    def _rate_limit_retry_after(error: BaseException) -> float | None:
+        """解析 Groq 429 的建議等待秒數。"""
+        message = str(error)
+        lowered = message.casefold()
+        if (
+            "429" not in lowered
+            and "rate_limit" not in lowered
+            and "rate limit" not in lowered
+        ):
+            return None
+
+        match = re.search(
+            r"try again in\s*"
+            r"(?:(?P<minutes>\d+(?:\.\d+)?)m)?"
+            r"(?:(?P<seconds>\d+(?:\.\d+)?)s)?",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            return 0.0
+        minutes = float(match.group("minutes") or 0.0)
+        seconds = float(match.group("seconds") or 0.0)
+        return minutes * 60 + seconds
+
+    def _execute_tool(
+        self,
+        tool_call: ToolCall,
+        allowed_tool_names: list[str],
+    ) -> tuple[ToolMessage, list[dict[str, Any]], str | None]:
+        """執行白名單工具並整理結果或錯誤。"""
+        tool_name = str(tool_call.get("name", ""))
+        tool_call_id = str(tool_call.get("id", ""))
+        if tool_name not in allowed_tool_names:
+            error = f"Groq 嘗試使用未允許的工具：{tool_name}"
+            return (
+                ToolMessage(
+                    content=error,
+                    tool_call_id=tool_call_id,
+                    status="error",
+                ),
+                [],
+                error,
+            )
+
+        selected_tool = self._tools_by_name[tool_name]
+        try:
+            raw_result = selected_tool.invoke(tool_call.get("args", {}))
+            parsed_results = (
+                [item for item in raw_result if isinstance(item, dict)]
+                if isinstance(raw_result, list)
+                else []
+            )
+            return (
+                ToolMessage(
+                    content=json.dumps(
+                        parsed_results,
+                        ensure_ascii=False,
+                    ),
+                    tool_call_id=tool_call_id,
+                    status="success",
+                ),
+                parsed_results,
+                None,
             )
         except Exception as error:
-            return ToolMessage(
-                content=f"工具 {tool_name} 執行失敗：{error}",
-                tool_call_id=tool_call["id"],
-                status="error",
+            message = f"工具 {tool_name} 執行失敗：{error}"
+            return (
+                ToolMessage(
+                    content=message,
+                    tool_call_id=tool_call_id,
+                    status="error",
+                ),
+                [],
+                message,
             )
 
+    @staticmethod
+    def _message_text(message: Any) -> str:
+        """從模型訊息取出文字內容。"""
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            if content.strip():
+                return content
+        elif isinstance(content, list):
+            text_parts: list[str] = []
+            for block in content:
+                if isinstance(block, str):
+                    text_parts.append(block)
+                elif isinstance(block, dict):
+                    block_text = block.get("text") or block.get("content")
+                    if isinstance(block_text, str):
+                        text_parts.append(block_text)
+            if text_parts:
+                return "\n".join(text_parts)
 
-@tool
-def alt_search_product_info(query: str) -> str:
-    """透過 Google 自訂搜尋取得最多三筆商品標題與摘要。"""
-    from googleapiclient.discovery import build
+        additional_kwargs = getattr(message, "additional_kwargs", {})
+        if isinstance(additional_kwargs, dict):
+            reasoning_content = additional_kwargs.get("reasoning_content")
+            if isinstance(reasoning_content, str) and reasoning_content.strip():
+                return reasoning_content
 
-    api_key = getattr(settings, "GOOGLE_API_KEY", "")
-    search_engine_id = getattr(settings, "GOOGLE_CSE_ID", "")
-    if not api_key or not search_engine_id:
-        raise RuntimeError("尚未設定 Google Custom Search")
+        return str(content)
 
-    service = build("customsearch", "v1", developerKey=api_key)
-    response = service.cse().list(
-        q=query,
-        cx=search_engine_id,
-        num=3,
-    ).execute()
+    @staticmethod
+    def _parse_json_object(text: str) -> dict[str, Any]:
+        """從模型文字中解析第一個 JSON 物件。"""
+        cleaned = text.strip()
+        if not cleaned:
+            raise ValueError("Groq 未回傳有效 JSON 物件（回覆為空）")
 
-    items = response.get("items", [])
-    if not items:
-        return "找不到符合條件的商品資訊。"
+        decoder = json.JSONDecoder()
+        last_error: json.JSONDecodeError | None = None
+        for start, character in enumerate(cleaned):
+            if character != "{":
+                continue
+            try:
+                parsed, _ = decoder.raw_decode(cleaned[start:])
+            except json.JSONDecodeError as error:
+                last_error = error
+                continue
+            if isinstance(parsed, dict):
+                return parsed
 
-    summary: list[str] = []
-    for item in items:
-        summary.append(f"標題：{item.get('title', '')}")
-        summary.append(f"摘要：{item.get('snippet', '')}")
-    return "\n".join(summary)
-
-
-@tool
-def search_product_info(query: str) -> str:
-    """透過 DuckDuckGo 取得最多三筆商品標題與摘要。"""
-    from ddgs import DDGS
-
-    with DDGS() as ddgs:
-        results = list(ddgs.text(query, max_results=3))
-
-    if not results:
-        return "找不到符合條件的商品資訊。"
-
-    summary: list[str] = []
-    for result in results:
-        summary.append(f"標題：{result.get('title', '')}")
-        summary.append(f"摘要：{result.get('body', '')}")
-        summary.append("---")
-    return "\n".join(summary)
+        if last_error is not None:
+            raise ValueError(
+                f"Groq 回傳 JSON 解析失敗：{last_error.msg}"
+            ) from last_error
+        else:
+            raise ValueError("Groq 未回傳有效 JSON 物件")
 
 
-def create_product_identifier_agent() -> ProductResearchAgent:
-    """依專案設定建立 Groq 語言模型及兩種搜尋工具的商品研究代理。"""
+def create_product_research_agent() -> ProductResearchAgent:
+    """建立已註冊搜尋工具的 Groq 代理。"""
     api_key_value = settings.GROQ_API_KEY.get_secret_value() or os.getenv(
         "GROQ_API_KEY",
         "",
@@ -168,8 +517,11 @@ def create_product_identifier_agent() -> ProductResearchAgent:
         temperature=0.1,
         api_key=SecretStr(api_key_value),
     )
-
     return ProductResearchAgent(
         llm=llm,
-        tools=[search_product_info, alt_search_product_info],
+        tools=[
+            search_market_prices_serpapi,
+            search_market_prices_tavily,
+            search_market_prices_ddgs
+        ],
     )

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from backend.config import settings
-from backend.schemas.url import UrlResponse, UrlRequest
+from backend.schemas.url import UrlRequest, UrlResponse
 from backend.services.url_service.url_analyzer import detector
 
 router = APIRouter(prefix="/v1", tags=["url-detector"])

@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+
 class RagEvidence(BaseModel):
     used: bool
     label: str | None = None

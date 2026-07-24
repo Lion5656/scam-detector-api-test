@@ -20,5 +20,7 @@ backend/.env.*
 data/
 db/
 
+dev.*
+
 scam-detector-ocr-*.json
 credentials.json
