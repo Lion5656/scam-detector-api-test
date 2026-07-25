@@ -19,10 +19,10 @@ from backend.services.image_price_service.ocr.ocr_service import (
 from backend.services.image_price_service.ocr.ocr_service import (
     ocr_service as default_ocr_service,
 )
-from backend.services.image_price_service.platform.fb_marketplace.fb_marketplace_detector import (
+from backend.services.image_price_service.page_analysis.fb_marketplace.fb_marketplace_detector import (
     fb_marketplace_detector,
 )
-from backend.services.image_price_service.platform.fb_marketplace.fb_marketplace_extractor import (
+from backend.services.image_price_service.page_analysis.fb_marketplace.fb_marketplace_extractor import (
     fb_marketplace_price_extractor,
 )
 from backend.services.image_price_service.pricing.market_price_resolver import (

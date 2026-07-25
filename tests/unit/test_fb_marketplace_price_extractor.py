@@ -7,10 +7,10 @@ from backend.services.image_price_service.models import (
     OCRDocument,
     OCRTextBlock,
 )
-from backend.services.image_price_service.platform.fb_marketplace.fb_marketplace_detector import (
+from backend.services.image_price_service.page_analysis.fb_marketplace.fb_marketplace_detector import (
     FBMarketplaceDetector,
 )
-from backend.services.image_price_service.platform.fb_marketplace.fb_marketplace_extractor import (
+from backend.services.image_price_service.page_analysis.fb_marketplace.fb_marketplace_extractor import (
     FBMarketplacePriceExtractor,
 )
 
@@ -64,6 +64,8 @@ def test_mobile_uses_single_price_above_offer_range():
     assert result.error_code is None
     assert result.product_name == "iphone 14 pro max 256g 紫"
     assert result.reason == "商品標題正下方的第一個 NT$ 單一價格"
+    assert result.seller_name is None
+    assert result.warnings == []
     assert {item.amount for item in result.rejected_candidates} == {8000, 13000}
     assert all(item.section == "offer_range" for item in result.rejected_candidates)
 
@@ -82,6 +84,71 @@ def test_desktop_extracts_only_number_from_inventory_line():
     assert result.source_text == "NT$39,500"
     assert result.product_name == "17Promax 銀256GB 台中面交 二手機可折優惠"
     assert result.reason == "桌面版右側商品標題下方 NT$ 價格列"
+    assert result.seller_name is None
+    assert result.warnings == []
+
+
+def test_desktop_finds_title_in_expanded_right_panel_region():
+    document = OCRDocument(
+        text="""二手良品-dyson TP11 wifi空氣清淨循環扇
+NT$8,000
+1 週前於台北市, 台灣上架
+詳細資料
+狀況 二手・良好""",
+        width=1898,
+        height=869,
+        blocks=[
+            OCRTextBlock(
+                text="二手良品-dyson TP11 wifi空氣清淨循環扇",
+                x=1080,
+                y=84,
+                width=690,
+                height=34,
+            ),
+            # 模擬桌面 OCR 閱讀順序被導覽列及左側圖片文字打散。
+            OCRTextBlock(text="Facebook", x=55, y=18, width=100, height=34),
+            OCRTextBlock(text="選單", x=1680, y=18, width=55, height=34),
+            OCRTextBlock(text="通知", x=1770, y=18, width=55, height=34),
+            OCRTextBlock(text="商品相片", x=310, y=420, width=120, height=30),
+            OCRTextBlock(text="下一張", x=1160, y=430, width=70, height=30),
+            OCRTextBlock(
+                text="NT$8,000",
+                x=1250,
+                y=121,
+                width=130,
+                height=28,
+            ),
+            OCRTextBlock(
+                text="1 週前於台北市, 台灣上架",
+                x=1250,
+                y=148,
+                width=270,
+                height=24,
+            ),
+            OCRTextBlock(text="詳細資料", x=1250, y=241, width=110, height=28),
+            OCRTextBlock(
+                text="狀況 二手・良好",
+                x=1250,
+                y=279,
+                width=240,
+                height=28,
+            ),
+        ],
+    )
+    detection = DetectionResult(
+        is_marketplace=True,
+        layout="desktop",
+        confidence=0.9,
+        evidence=[],
+    )
+
+    result = FBMarketplacePriceExtractor().extract(document, detection)
+
+    assert result.product_name == "二手良品-dyson TP11 wifi空氣清淨循環扇"
+    assert result.price == 8000
+    assert result.condition is MarketplaceCondition.USED
+    assert result.seller_name is None
+    assert result.warnings == []
 
 
 def test_discount_row_uses_first_price_when_ocr_combines_both_prices():
@@ -429,6 +496,61 @@ def test_offer_range_only_never_becomes_main_price():
     assert exc_info.value.error_code == "MAIN_PRICE_NOT_FOUND"
     assert extraction.error_code == "MAIN_PRICE_NOT_FOUND"
     assert {item.amount for item in extraction.rejected_candidates} == {8000, 13000}
+
+
+@pytest.mark.parametrize("layout", ["mobile", "desktop"])
+def test_missing_product_fields_stop_extraction_for_all_layouts(layout):
+    document = OCRDocument(
+        text="""詳細資料
+狀況 二手""",
+        width=652 if layout == "mobile" else 1898,
+        height=2132 if layout == "mobile" else 869,
+    )
+    detection = DetectionResult(
+        is_marketplace=True,
+        layout=layout,
+        confidence=0.9,
+        evidence=[],
+    )
+
+    with pytest.raises(MainPriceExtractionError) as exc_info:
+        FBMarketplacePriceExtractor().extract(document, detection)
+
+    assert exc_info.value.result.warnings == [
+        "找不到主價格上方的 Marketplace 商品標題",
+        "找不到 Marketplace 商品價格",
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "NT$8,000\n詳細資料\n狀況 二手",
+        "Dyson TP11 空氣清淨循環扇\n詳細資料\n狀況 二手",
+    ],
+)
+@pytest.mark.parametrize("layout", ["mobile", "desktop"])
+def test_missing_title_or_price_never_continues_extraction(text, layout):
+    document = OCRDocument(
+        text=text,
+        width=652 if layout == "mobile" else 1898,
+        height=2132 if layout == "mobile" else 869,
+    )
+    detection = DetectionResult(
+        is_marketplace=True,
+        layout=layout,
+        confidence=0.9,
+        evidence=[],
+    )
+
+    with pytest.raises(MainPriceExtractionError) as exc_info:
+        FBMarketplacePriceExtractor().extract(document, detection)
+
+    assert exc_info.value.result.price is None
+    assert exc_info.value.result.error_code in {
+        "MAIN_PRICE_NOT_FOUND",
+        "LOW_CONFIDENCE_PRICE_EXTRACTION",
+    }
 
 
 def test_non_nt_price_is_not_accepted_as_marketplace_main_price():
