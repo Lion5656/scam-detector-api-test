@@ -3,19 +3,13 @@
 import json
 import logging
 import os
-import re
 import time
 from typing import Any, Literal
 
 import serpapi
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import (
-    BaseMessage,
-    HumanMessage,
-    SystemMessage,
-    ToolCall,
-    ToolMessage,
-)
+from langchain_core.messages import (BaseMessage, HumanMessage, SystemMessage,
+                                     ToolCall, ToolMessage)
 from langchain_core.tools import BaseTool, tool
 from langchain_groq import ChatGroq
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -75,6 +69,7 @@ def search_market_prices_serpapi(
     if not api_key:
         raise RuntimeError("尚未設定 SERP_API_KEY")
 
+    logging.info("SerpApi 搜尋 query=%r max_results=%d", query, max_results)
     client = serpapi.Client(api_key=api_key, timeout=60)
     response = client.search(
         {
@@ -124,6 +119,7 @@ def search_market_prices_ddgs(
     from ddgs import DDGS
 
     with DDGS() as ddgs:
+        logging.info("DuckDuckGo 搜尋 query=%r max_results=%d", query, max_results)
         raw_results = list(
             ddgs.text(
                 query,
@@ -132,6 +128,7 @@ def search_market_prices_ddgs(
                 max_results=max_results,
             )
         )
+
     results = [
         {
             "title": str(item.get("title", "")).strip(),
@@ -156,7 +153,8 @@ def search_market_prices_tavily(
     )
     if not api_key:
         raise RuntimeError("尚未設定 TAVILY_SEARCH_API_KEY")
-
+    
+    logging.info("Tavily 搜尋 query=%r max_results=%d", query, max_results)
     response = TavilyClient(api_key=api_key).search(
         query=query,
         max_results=max_results,
@@ -164,6 +162,8 @@ def search_market_prices_tavily(
         include_domains=settings.SEARCH_DOMAIN,
         exclude_domains=settings.EXCLUDE_DOMAIN,
     )
+
+
     results = [
         {
             "title": str(item.get("title", "")).strip(),
@@ -306,36 +306,14 @@ class ProductResearchAgent:
         except Exception as error:
             json_mode_error = error
 
-        retry_after = self._rate_limit_retry_after(json_mode_error)
-        if retry_after is not None:
-            if retry_after > settings.GROQ_RATE_LIMIT_MAX_WAIT_SECONDS:
-                logger.warning(
-                    "Groq rate limited tool=%s retry_after=%.1fs; "
-                    "text fallback skipped",
-                    tool_name,
-                    retry_after,
-                )
-                raise GroqRateLimitError(retry_after) from json_mode_error
-            retry_delay = max(
-                retry_after,
-                settings.GROQ_FALLBACK_RETRY_DELAY_SECONDS,
-            )
-            logger.warning(
-                "Groq rate limited tool=%s retry_after=%.1fs; "
-                "retrying text mode in %.1fs",
-                tool_name,
-                retry_after,
-                retry_delay,
-            )
-        else:
-            retry_delay = settings.GROQ_FALLBACK_RETRY_DELAY_SECONDS
-            logger.warning(
-                "Groq JSON mode failed tool=%s error=%s; "
-                "retrying text mode in %.1fs",
-                tool_name,
-                str(json_mode_error),
-                retry_delay,
-            )
+        retry_delay = settings.GROQ_FALLBACK_RETRY_DELAY_SECONDS
+        logger.warning(
+            "Groq JSON mode failed tool=%s error=%s; "
+            "retrying text mode in %.1fs",
+            tool_name,
+            str(json_mode_error),
+            retry_delay,
+        )
         if retry_delay > 0:
             time.sleep(retry_delay)
 
@@ -343,21 +321,7 @@ class ProductResearchAgent:
             reasoning_format="hidden",
             reasoning_effort="none",
         )
-        try:
-            fallback_response = fallback_llm.invoke(messages)
-        except Exception as error:
-            fallback_retry_after = self._rate_limit_retry_after(error)
-            if fallback_retry_after is not None:
-                logger.warning(
-                    "Groq text fallback rate limited tool=%s "
-                    "retry_after=%.1fs",
-                    tool_name,
-                    fallback_retry_after,
-                )
-                raise GroqRateLimitError(
-                    fallback_retry_after
-                ) from error
-            raise
+        fallback_response = fallback_llm.invoke(messages)
         fallback_text = self._message_text(fallback_response)
         try:
             fallback_output = self._parse_json_object(fallback_text)
@@ -370,31 +334,6 @@ class ProductResearchAgent:
                 fallback_text[:500],
             )
             raise ValueError("Groq 未回傳有效的價格結構") from error
-
-    @staticmethod
-    def _rate_limit_retry_after(error: BaseException) -> float | None:
-        """解析 Groq 429 的建議等待秒數。"""
-        message = str(error)
-        lowered = message.casefold()
-        if (
-            "429" not in lowered
-            and "rate_limit" not in lowered
-            and "rate limit" not in lowered
-        ):
-            return None
-
-        match = re.search(
-            r"try again in\s*"
-            r"(?:(?P<minutes>\d+(?:\.\d+)?)m)?"
-            r"(?:(?P<seconds>\d+(?:\.\d+)?)s)?",
-            message,
-            flags=re.IGNORECASE,
-        )
-        if match is None:
-            return 0.0
-        minutes = float(match.group("minutes") or 0.0)
-        seconds = float(match.group("seconds") or 0.0)
-        return minutes * 60 + seconds
 
     def _execute_tool(
         self,

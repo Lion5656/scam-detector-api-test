@@ -18,7 +18,6 @@ from backend.services.image_price_service.product.product_identifier import (
     ProductIdentifier,
 )
 from backend.services.image_price_service.product.product_research_agent import (
-    GroqRateLimitError,
     ProductResearchAgent,
 )
 
@@ -416,7 +415,7 @@ def test_online_price_search_retries_text_mode_after_json_mode_error(
     ) in caplog.text
 
 
-def test_online_price_search_skips_immediate_retry_for_long_rate_limit(
+def test_online_price_search_retries_text_mode_after_rate_limit(
     caplog,
 ) -> None:
     @tool
@@ -433,22 +432,22 @@ def test_online_price_search_skips_immediate_retry_for_long_rate_limit(
     agent = ProductResearchAgent(llm=llm, tools=[fake_search])
 
     with caplog.at_level(logging.WARNING):
-        with pytest.raises(GroqRateLimitError) as exc_info:
-            agent.online_price_search(
-                system_prompt="搜尋後回傳 JSON",
-                user_prompt=json.dumps(
-                    {
-                        "product_query": "商品價格",
-                        "max_results": 8,
-                    }
-                ),
-                allowed_tool_names=["fake_search"],
-            )
+        result = agent.online_price_search(
+            system_prompt="搜尋後回傳 JSON",
+            user_prompt=json.dumps(
+                {
+                    "product_query": "商品價格",
+                    "max_results": 8,
+                }
+            ),
+            allowed_tool_names=["fake_search"],
+        )
 
-    assert exc_info.value.retry_after_seconds == pytest.approx(642.384)
+    assert result.output == {"prices": []}
     assert (
-        "Groq rate limited tool=fake_search retry_after=642.4s; "
-        "text fallback skipped"
+        "Groq JSON mode failed tool=fake_search "
+        "error=Error code: 429 - rate_limit_exceeded; "
+        "Please try again in 10m42.384s; retrying text mode"
     ) in caplog.text
 
 

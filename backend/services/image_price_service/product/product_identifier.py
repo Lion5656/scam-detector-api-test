@@ -7,17 +7,12 @@ from typing import Any
 from groq import APIError
 
 from backend.repository.market_price_repository import (
-    MarketPriceRepository,
-    market_price_repository,
-)
+    MarketPriceRepository, market_price_repository)
 from backend.services.dto.price_analysis import ProductIdentification
-from backend.services.image_price_service.product.patterm_identifier import (
-    pattern_identifier,
-)
+from backend.services.image_price_service.product.patterm_identifier import \
+    pattern_identifier
 from backend.services.image_price_service.product.product_research_agent import (
-    ProductResearchAgent,
-    create_product_research_agent,
-)
+    ProductResearchAgent, create_product_research_agent)
 
 logging = logging.getLogger(__name__)
 
@@ -176,7 +171,7 @@ class ProductIdentifier:
 
         if not parts:
             return ""
-        return f"{' '.join(parts)} 台灣 價格"
+        return f"{' '.join(parts)} 價格"
 
 
 product_identifier = ProductIdentifier()
