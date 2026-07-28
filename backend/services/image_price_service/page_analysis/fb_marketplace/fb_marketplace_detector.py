@@ -2,7 +2,7 @@
 
 import re
 
-from backend.services.image_price_service.models import (
+from backend.services.image_price_service.domain.models import (
     DetectionResult,
     MarketplaceLayout,
     OCRDocument,

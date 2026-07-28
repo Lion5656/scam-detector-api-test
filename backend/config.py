@@ -52,14 +52,11 @@ class Settings(BaseSettings):
     ONLINE_PRICE_MAX_RESULTS: int = 10
     SEARCH_DOMAIN: list[str] = ["biggo.com.tw", "momo.com.tw", "pchome.com.tw", "shopee.tw", "ruten.com.tw", "tw.carousell.com"]
     EXCLUDE_DOMAIN: list[str] = ["zh.wikipedia.org"]
-    ONLINE_PRICE_MIN_SITES: int = 1
-    ONLINE_PRICE_MIN_PRICE_POINTS: int = 3
     ONLINE_PRICE_FALLBACK_DELAY_SECONDS: float = 2.0
     GROQ_FALLBACK_RETRY_DELAY_SECONDS: float = 2.0
     GROQ_RATE_LIMIT_MAX_WAIT_SECONDS: float = 30.0
     PRODUCT_MATCH_FUZZY_MIN_SCORE: int = 86
     ENABLE_INTELLIGENT_LAYER: bool = True
-    INTELLIGENT_CONFIDENCE_THRESHOLD: float = 0.82
     BLACKLIST_TERMS_PATH: str = str(ROOT_DIR / "data" / "blacklist_terms.json")
     CASE_LOG_PATH: str = str(ROOT_DIR / "data" / "cases" / "image_analysis_cases.jsonl")
     CASE_MEMORY_ENABLED: bool = True

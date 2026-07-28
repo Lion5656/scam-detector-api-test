@@ -3,7 +3,7 @@
 import re
 from typing import NoReturn
 
-from backend.services.image_price_service.models import (
+from backend.services.image_price_service.domain.models import (
     DetectionResult, MainPriceExtractionError, MainPriceExtractionResult,
     MarketplaceLayout, OCRDocument, OCRTextBlock, PriceCandidate, PriceSection)
 from backend.services.image_price_service.ocr.ocr_text_utils import (
@@ -30,7 +30,11 @@ class FBMarketplacePriceExtractor:
         candidate_selector: PriceCandidateSelector | None = None,
     ) -> None:
         """建立可替換版型策略與共用候選選擇器的抽取器。"""
-        self._rules = rules or FBMarketplaceRules()
+        self._rules: FBMarketplaceRules = (
+            rules
+            if rules is not None
+            else FBMarketplaceRules()
+        )
         self._mobile_layout = (
             mobile_layout
             or MobileLayoutExtractor(self._rules)
@@ -310,7 +314,7 @@ class FBMarketplacePriceExtractor:
             product_name=product_name,
             seller_name=seller_name,
             condition=condition,
-            condition_confidence=condition_confidence,
+            condition_extraction_confidence=condition_confidence,
             warnings=warnings,
         )
 
@@ -357,7 +361,7 @@ class FBMarketplacePriceExtractor:
             ),
             seller_name=seller_name,
             condition=condition,
-            condition_confidence=condition_confidence,
+            condition_extraction_confidence=condition_confidence,
             warnings=warnings,
         )
         raise MainPriceExtractionError(result)

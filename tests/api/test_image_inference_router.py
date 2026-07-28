@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from backend.routers import image_price_validation
 from backend.services.dto.price_analysis import ImagePriceAnalysisResult
-from backend.services.image_price_service.models import MarketplaceCondition
+from backend.services.image_price_service.domain.models import MarketplaceCondition
 
 client_app = FastAPI()
 client_app.include_router(image_price_validation.router)

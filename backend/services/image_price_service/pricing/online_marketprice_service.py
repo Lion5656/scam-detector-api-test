@@ -10,7 +10,11 @@ from urllib.parse import urlsplit, urlunsplit
 
 from backend.config import settings
 from backend.services.dto.price_analysis import SearchTool
-from backend.services.image_price_service.models import MarketplaceCondition
+from backend.services.image_price_service.domain.models import MarketplaceCondition
+from backend.services.image_price_service.domain.policy import (
+    DEFAULT_PRICE_RISK_POLICY,
+    PriceRiskPolicy,
+)
 from backend.services.image_price_service.product.product_research_agent import (
     GroqRateLimitError,
     ProductAgentResult,
@@ -74,9 +78,11 @@ class OnlineMarketPriceService:
         self,
         *,
         research_agent: ProductResearchAgent | None = None,
+        policy: PriceRiskPolicy = DEFAULT_PRICE_RISK_POLICY,
     ) -> None:
         """建立線上市價服務。"""
         self._research_agent = research_agent
+        self.policy = policy
 
     def estimate_price(
         self,
@@ -377,16 +383,20 @@ class OnlineMarketPriceService:
         contributing_sites = 0
         flat_prices: list[int] = []
         for values in site_prices.values():
-            cleaned = [v for v in values if 300 <= v <= 2_000_000]
+            cleaned = [
+                value
+                for value in values
+                if 0 < value <= self.policy.maximum_supported_price
+            ]
             if cleaned:
                 contributing_sites += 1
                 flat_prices.extend(cleaned)
 
-        if contributing_sites < settings.ONLINE_PRICE_MIN_SITES:
+        if contributing_sites < self.policy.minimum_market_sites:
             return 0
 
         normalized = self._normalize_prices(flat_prices)
-        if len(normalized) < settings.ONLINE_PRICE_MIN_PRICE_POINTS:
+        if len(normalized) < self.policy.minimum_market_samples:
             return 0
         return int(median(normalized))
 
@@ -395,18 +405,17 @@ class OnlineMarketPriceService:
         values: list[int] = []
         for match in self._PRICE_PATTERN.finditer(text.replace(",", "")):
             value = int(match.group(1))
-            if 300 <= value <= 2_000_000:
+            if 0 < value <= self.policy.maximum_supported_price:
                 values.append(value)
         return values
 
-    @staticmethod
-    def _parse_price(value: Any) -> int | None:
+    def _parse_price(self, value: Any) -> int | None:
         """將輸入值轉成合理的整數價格。"""
         try:
             parsed = int(float(str(value).replace(",", "").strip()))
         except (TypeError, ValueError):
             return None
-        if not 300 <= parsed <= 2_000_000:
+        if not 0 < parsed <= self.policy.maximum_supported_price:
             return None
         return parsed
 

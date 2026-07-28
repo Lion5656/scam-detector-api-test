@@ -1,4 +1,4 @@
-from backend.services.image_price_service.models import OCRDocument
+from backend.services.image_price_service.domain.models import OCRDocument
 from backend.services.image_price_service.ocr.ocr_service import (
     extract_ocr_document,
 )

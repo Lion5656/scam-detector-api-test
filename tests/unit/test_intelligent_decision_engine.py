@@ -28,7 +28,7 @@ def test_fast_layer_when_product_and_price_are_complete(monkeypatch):
 
     assert out["decision_layer"] == "fast"
     assert out["risk_label"] == "LOW"
-    assert out["risk_score"] == 20.0
+    assert out["risk_score"] == 35.0
     assert out["market_price_source"] == "online"
 
 
@@ -56,7 +56,7 @@ def test_llm_failure_uses_heuristic_fallback(monkeypatch):
     )
 
     assert out["decision_layer"] == "llm_simulated"
-    assert out["risk_score"] == 20.0
+    assert out["risk_score"] == 5.0
     assert out["market_price_source"] == "fallback_local"
     assert "黑名單命中" in out["reason"]
 
@@ -81,16 +81,20 @@ def test_price_risk_starts_from_existing_high_risk_score(monkeypatch):
     )
 
     assert out["risk_label"] == "HIGH"
-    assert out["risk_score"] >= 90.0
-    assert "低於行情 50% 規則觸發" in out["evidence"]
+    assert out["risk_score"] == 100.0
+    assert "低於行情價格 policy 規則觸發" in out["evidence"]
 
 
 def test_price_risk_boundary_rules_are_owned_by_fusion_engine():
-    assert FusionDecisionEngine._has_price_risk(13_949, 27_900) is True
-    assert FusionDecisionEngine._has_price_risk(13_950, 27_900) is False
-    assert FusionDecisionEngine._has_price_risk(55_799, 27_900) is False
-    assert FusionDecisionEngine._has_price_risk(55_800, 27_900) is True
-    assert FusionDecisionEngine._has_price_risk(0, 27_900) is False
+    engine = FusionDecisionEngine()
+
+    assert engine._calculate_price_score(25_000, 27_900) == 35.0
+    assert engine._has_price_risk(25_000, 27_900) is False
+    assert engine._calculate_price_score(22_900, 27_900) == 45.0
+    assert engine._has_price_risk(22_900, 27_900) is True
+    assert engine._calculate_price_score(55_800, 27_900) == 79.0
+    assert engine._has_price_risk(55_800, 27_900) is True
+    assert engine._has_price_risk(0, 27_900) is False
 
 
 def test_price_rule_overrides_successful_llm_low_risk_result(monkeypatch):
@@ -115,8 +119,8 @@ def test_price_rule_overrides_successful_llm_low_risk_result(monkeypatch):
         market_price=27_900,
     )
 
-    assert out["risk_label"] == "HIGH"
-    assert out["risk_score"] == 90.0
+    assert out["risk_label"] == "MEDIUM"
+    assert out["risk_score"] == 79.0
     assert "模型判定為低風險" in out["reason"]
-    assert "高於行情 2 倍規則觸發" in out["evidence"]
+    assert "高於行情價格 policy 規則觸發" in out["evidence"]
     assert out["decision_layer"] == "llm"

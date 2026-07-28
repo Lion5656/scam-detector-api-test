@@ -4,7 +4,7 @@ from typing import Any
 
 from backend.config import settings
 from backend.services.dto.price_analysis import MarketPriceSource, SearchTool
-from backend.services.image_price_service.models import MarketplaceCondition
+from backend.services.image_price_service.domain.models import MarketplaceCondition
 
 
 def resolve_market_price(

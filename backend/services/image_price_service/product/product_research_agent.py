@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from tavily import TavilyClient
 
 from backend.config import settings
-from backend.services.image_price_service.models import ProductAgentResult
+from backend.services.image_price_service.domain.models import ProductAgentResult
 
 logger = logging.getLogger(__name__)
 

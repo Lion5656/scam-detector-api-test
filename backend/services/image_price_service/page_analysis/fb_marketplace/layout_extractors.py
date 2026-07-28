@@ -2,7 +2,7 @@
 
 from typing import Protocol
 
-from backend.services.image_price_service.models import (
+from backend.services.image_price_service.domain.models import (
     OCRDocument,
     OCRTextBlock,
 )

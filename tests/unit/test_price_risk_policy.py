@@ -1,0 +1,270 @@
+import inspect
+from enum import Enum
+from typing import get_args, get_origin
+
+import pytest
+from pydantic import BaseModel, ValidationError
+
+from backend.services.image_price_service.image_price_analyzer import (
+    default_decision_engine,
+    default_online_price_service,
+)
+from backend.services.image_price_service.domain.policy import (
+    DEFAULT_PRICE_RISK_POLICY,
+    PriceRiskPolicy,
+)
+from backend.services.image_price_service.pricing.online_marketprice_service import (
+    OnlineMarketPriceService,
+)
+from backend.services.image_price_service.risk.fusion_decision_engine import (
+    FusionDecisionEngine,
+)
+
+
+def _policy_data(**updates):
+    payload = DEFAULT_PRICE_RISK_POLICY.model_dump()
+    payload.update(updates)
+    return payload
+
+
+def test_default_price_risk_policy_matches_documented_thresholds():
+    policy = DEFAULT_PRICE_RISK_POLICY
+
+    assert policy.underprice_relative_bands == (
+        (0.10, 10),
+        (0.20, 25),
+        (0.35, 45),
+        (0.50, 65),
+        (float("inf"), 85),
+    )
+    assert policy.overprice_relative_bands == (
+        (0.15, 10),
+        (0.30, 20),
+        (0.60, 40),
+        (1.00, 55),
+        (float("inf"), 70),
+    )
+    assert policy.absolute_gap_bands == (
+        (499, 0),
+        (1_999, 5),
+        (4_999, 10),
+        (9_999, 20),
+        (100_000, 30),
+    )
+    assert policy.model_dump(
+        exclude={
+            "underprice_relative_bands",
+            "overprice_relative_bands",
+            "absolute_gap_bands",
+        }
+    ) == {
+        "maximum_supported_price": 100_000,
+        "low_score_max": 39,
+        "medium_score_max": 79,
+        "maximum_score": 100,
+        "overprice_score_cap": 79,
+        "minimum_market_confidence": 0.60,
+        "minimum_market_samples": 3,
+        "minimum_market_sites": 3,
+        "minimum_iqr_samples": 5,
+        "small_sample_relative_tolerance": 0.25,
+        "small_sample_score_cap": 79,
+        "llm_review_min_confidence": 0.80,
+        "condition_llm_correction_max_confidence": 0.80,
+    }
+
+
+def test_price_risk_policy_is_frozen_and_forbids_extra_fields():
+    assert issubclass(PriceRiskPolicy, BaseModel)
+    assert PriceRiskPolicy.model_config["frozen"] is True
+    assert PriceRiskPolicy.model_config["extra"] == "forbid"
+
+    with pytest.raises(ValidationError):
+        DEFAULT_PRICE_RISK_POLICY.low_score_max = 20
+
+    with pytest.raises(ValidationError):
+        PriceRiskPolicy(**_policy_data(enable_fallback=True))
+
+
+def test_price_risk_policy_has_no_behavior_switch_or_enum_fields():
+    forbidden_names = {
+        "enable_dual_path",
+        "enable_fallback",
+        "enable_llm",
+        "fallback_strategy",
+        "merge_strategy",
+    }
+
+    assert forbidden_names.isdisjoint(PriceRiskPolicy.model_fields)
+    for field in PriceRiskPolicy.model_fields.values():
+        annotation = field.annotation
+        assert annotation is not bool
+        assert not (
+            isinstance(annotation, type)
+            and issubclass(annotation, Enum)
+        )
+        assert get_origin(annotation) is not None or annotation in {int, float}
+        assert bool not in get_args(annotation)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "underprice_relative_bands": (
+                (0.20, 10),
+                (0.10, 25),
+                (float("inf"), 85),
+            )
+        },
+        {
+            "overprice_relative_bands": (
+                (0.30, 10),
+                (0.15, 20),
+                (float("inf"), 70),
+            )
+        },
+        {"absolute_gap_bands": ((1_999, 5), (499, 0), (100_000, 30))},
+        {"absolute_gap_bands": ((499, 0), (99_999, 30))},
+        {
+            "underprice_relative_bands": (
+                (0.10, 101),
+                (float("inf"), 85),
+            )
+        },
+        {"maximum_score": 101},
+        {"low_score_max": 79},
+        {"medium_score_max": 100},
+        {"maximum_supported_price": 0},
+        {"minimum_iqr_samples": 4},
+        {"minimum_iqr_samples": 5, "minimum_market_samples": 6},
+        {"small_sample_score_cap": 80},
+        {"llm_review_min_confidence": 1.01},
+        {"condition_llm_correction_max_confidence": -0.01},
+    ],
+)
+def test_price_risk_policy_rejects_invalid_thresholds(updates):
+    with pytest.raises(ValidationError):
+        PriceRiskPolicy(**_policy_data(**updates))
+
+
+def test_market_service_and_decision_engine_share_injected_policy():
+    policy = PriceRiskPolicy(
+        **_policy_data(
+            minimum_market_sites=2,
+            minimum_market_samples=4,
+            minimum_iqr_samples=6,
+        )
+    )
+    market_service = OnlineMarketPriceService(policy=policy)
+    decision_engine = FusionDecisionEngine(policy=policy)
+
+    assert market_service.policy is policy
+    assert decision_engine.policy is policy
+
+
+def test_application_assembly_and_fallback_use_the_shared_policy():
+    assert (
+        default_online_price_service.policy
+        is default_decision_engine.policy
+        is DEFAULT_PRICE_RISK_POLICY
+    )
+
+    policy = PriceRiskPolicy(
+        **_policy_data(
+            low_score_max=50,
+        )
+    )
+    market_service = OnlineMarketPriceService(policy=policy)
+    decision_engine = FusionDecisionEngine(policy=policy)
+    fallback = decision_engine._alt_deep_result(
+        {
+            "risk_score": 45.0,
+            "reason": "價格規則結果",
+            "has_risk": "含價格風險",
+        },
+        {
+            "blacklist": 0,
+            "market_price": {
+                "price": 20_000,
+                "source": "online",
+            },
+        },
+    )
+
+    assert market_service.policy is decision_engine.policy is policy
+    assert fallback["risk_label"] == "低風險"
+
+
+def test_custom_policy_changes_price_boundary_label_and_deep_analysis(
+    monkeypatch,
+):
+    policy = PriceRiskPolicy(
+        **_policy_data(
+            low_score_max=0,
+            medium_score_max=10,
+            overprice_score_cap=10,
+            small_sample_score_cap=10,
+        )
+    )
+    default_engine = FusionDecisionEngine()
+    custom_engine = FusionDecisionEngine(policy=policy)
+    default_calls: list[dict] = []
+    custom_calls: list[dict] = []
+
+    monkeypatch.setattr(default_engine, "_run_blacklist_hit", lambda _text: 0)
+    monkeypatch.setattr(custom_engine, "_run_blacklist_hit", lambda _text: 0)
+    monkeypatch.setattr(
+        default_engine,
+        "_call_llm_deep_analysis",
+        lambda product_context, _tools: default_calls.append(product_context),
+    )
+    monkeypatch.setattr(
+        custom_engine,
+        "_call_llm_deep_analysis",
+        lambda product_context, _tools: custom_calls.append(product_context),
+    )
+    arguments = {
+        "product_name": "測試商品",
+        "brand_model": "測試型號",
+        "text": "商品狀態明確",
+        "selling_price": 90,
+        "market_price": 100,
+        "market_price_source": "online",
+    }
+
+    default_result = default_engine.evaluate(**arguments)
+    custom_result = custom_engine.evaluate(**arguments)
+
+    assert default_result["risk_label"] == "LOW"
+    assert default_result["decision_layer"] == "fast"
+    assert default_calls == []
+    assert custom_result["risk_label"] == "MEDIUM"
+    assert custom_result["decision_layer"] == "llm_simulated"
+    assert len(custom_calls) == 1
+
+
+def test_custom_policy_changes_supported_market_price_boundary():
+    policy = PriceRiskPolicy(
+        **_policy_data(
+            absolute_gap_bands=((499, 0), (500, 30)),
+            maximum_supported_price=500,
+        )
+    )
+    service = OnlineMarketPriceService(policy=policy)
+
+    assert service._parse_price(500) == 500
+    assert service._parse_price(501) is None
+
+
+def test_decision_engine_has_no_legacy_magic_price_thresholds():
+    source = inspect.getsource(FusionDecisionEngine)
+
+    for legacy_threshold in (
+        "market_price * 0.5",
+        "market_price * 2",
+        "90.0",
+        "score >= 80",
+        "score >= 40",
+    ):
+        assert legacy_threshold not in source

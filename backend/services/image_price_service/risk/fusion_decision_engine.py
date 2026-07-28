@@ -13,25 +13,89 @@ from backend.services.dto.price_analysis import (
     MarketPriceSource,
     RiskLabel,
 )
+from backend.services.image_price_service.domain.policy import (
+    DEFAULT_PRICE_RISK_POLICY,
+    PriceRiskPolicy,
+)
 
 
 class FusionDecisionEngine:
     """整合價格、黑名單與 Groq 產生風險決策。"""
 
+    def __init__(
+        self,
+        policy: PriceRiskPolicy = DEFAULT_PRICE_RISK_POLICY,
+    ) -> None:
+        """建立決策器並保存與市場查價共用的 domain policy。"""
+        self.policy = policy
+
     @staticmethod
-    def _has_price_risk(selling_price: int, market_price: int) -> bool:
-        """判斷正數售價是否低於市價五成，或達到市價兩倍以上。"""
-        return (
-            selling_price > 0
-            and market_price > 0
-            and (
-                selling_price < market_price * 0.5
-                or selling_price >= market_price * 2
+    def _score_from_bands(
+        value: float | int,
+        bands: tuple[tuple[float | int, int], ...],
+    ) -> int:
+        """依含等號的上界級距取得分數。"""
+        for threshold, score in bands:
+            if value <= threshold:
+                return score
+        return bands[-1][1]
+
+    def _calculate_price_score(
+        self,
+        selling_price: int,
+        market_price: int,
+    ) -> float:
+        """使用注入 policy 計算目前單一參考價契約的價格分數。"""
+        if selling_price <= 0 or market_price <= 0:
+            return 0.0
+        if selling_price == market_price:
+            return 0.0
+
+        absolute_gap = abs(selling_price - market_price)
+        if selling_price < market_price:
+            relative_gap = absolute_gap / market_price
+            relative_score = self._score_from_bands(
+                relative_gap,
+                self.policy.underprice_relative_bands,
+            )
+            score_cap = self.policy.maximum_score
+        else:
+            relative_gap = absolute_gap / market_price
+            relative_score = self._score_from_bands(
+                relative_gap,
+                self.policy.overprice_relative_bands,
+            )
+            score_cap = self.policy.overprice_score_cap
+
+        absolute_bonus = self._score_from_bands(
+            absolute_gap,
+            self.policy.absolute_gap_bands,
+        )
+        return float(
+            min(
+                relative_score + absolute_bonus,
+                score_cap,
+                self.policy.maximum_score,
             )
         )
 
-    @staticmethod
+    def _risk_label_from_score(self, score: float) -> RiskLabel:
+        """使用 policy 的 LOW／MEDIUM 邊界轉換標準風險標籤。"""
+        if score > self.policy.medium_score_max:
+            return "HIGH"
+        if score > self.policy.low_score_max:
+            return "MEDIUM"
+        return "LOW"
+
+    def _has_price_risk(self, selling_price: int, market_price: int) -> bool:
+        """判斷 policy 價格分數是否超過 LOW 邊界。"""
+        return (
+            self._calculate_price_score(selling_price, market_price)
+            > self.policy.low_score_max
+        )
+
     def _enforce_price_risk(
+        self,
         decision: dict[str, Any],
         selling_price: int,
         market_price: int,
@@ -41,25 +105,38 @@ class FusionDecisionEngine:
         if not has_price_risk:
             return decision
 
+        policy_score = self._calculate_price_score(
+            selling_price,
+            market_price,
+        )
         score = decision.get("risk_score")
         enforced_score = (
-            max(float(score), 90.0)
+            min(
+                max(float(score), policy_score),
+                float(self.policy.maximum_score),
+            )
             if isinstance(score, (int, float))
-            else 90.0
+            else policy_score
         )
         reason = str(decision.get("reason") or "")
-        if selling_price < market_price * 0.5:
+        absolute_gap = abs(selling_price - market_price)
+        relative_gap = (
+            absolute_gap / market_price
+            if market_price > 0
+            else 0.0
+        )
+        if selling_price < market_price:
             price_reason = (
-                f"販售價格 {selling_price} 低於正常市價 {market_price} 的 50%，"
-                "判定為高風險低於行情"
+                f"販售價格 {selling_price} 低於正常市價 {market_price}，"
+                f"相對差距 {relative_gap:.2%}、絕對差額 {absolute_gap}"
             )
-            price_evidence = "低於行情 50% 規則觸發"
+            price_evidence = "低於行情價格 policy 規則觸發"
         else:
             price_reason = (
-                f"販售價格 {selling_price} 達正常市價 {market_price} 的 2 倍以上，"
-                "判定為高風險高於行情"
+                f"販售價格 {selling_price} 高於正常市價 {market_price}，"
+                f"相對差距 {relative_gap:.2%}、絕對差額 {absolute_gap}"
             )
-            price_evidence = "高於行情 2 倍規則觸發"
+            price_evidence = "高於行情價格 policy 規則觸發"
 
         evidence = [str(item) for item in decision.get("evidence") or []]
         if price_evidence not in evidence:
@@ -67,7 +144,7 @@ class FusionDecisionEngine:
 
         return {
             **decision,
-            "risk_label": "高風險",
+            "risk_label": self._risk_label_from_score(enforced_score),
             "risk_score": enforced_score,
             "reason": f"{reason}；{price_reason}" if reason else price_reason,
             "evidence": evidence,
@@ -90,7 +167,7 @@ class FusionDecisionEngine:
     def _normalize_decision_layer(layer: object) -> DecisionLayer:
         """驗證決策層名稱，未知值一律降級為快速決策層。"""
         value = str(layer or "fast").strip().lower()
-        if value in {"fast", "llm", "llm_simulated", "source_validation"}:
+        if value in {"fast", "llm", "llm_simulated", "decision_error"}:
             return cast(DecisionLayer, value)
         return "fast"
 
@@ -168,14 +245,14 @@ class FusionDecisionEngine:
             evidence.append(f"本地價格參考 {market_price}")
 
         score = min(
-            100.0,
+            float(self.policy.maximum_score),
             max(5.0, base_score, base_score * 0.60 + risk_bonus * 0.40),
         )
 
         label = "低風險"
-        if score >= 80:
+        if score > self.policy.medium_score_max:
             label = "高風險"
-        elif score >= 40:
+        elif score > self.policy.low_score_max:
             label = "中等風險"
 
         reason = str(base_result.get("reason") or "")
@@ -263,7 +340,11 @@ class FusionDecisionEngine:
         market_price_source: MarketPriceSource,
     ) -> dict[str, Any]:
         """整合商品資料並回傳最終風險結果。"""
-        has_price_risk = self._has_price_risk(selling_price, market_price)
+        base_score = self._calculate_price_score(
+            selling_price,
+            market_price,
+        )
+        has_price_risk = base_score > self.policy.low_score_max
         tools = {
             "blacklist": self._run_blacklist_hit(text),
             "market_price": {
@@ -280,7 +361,7 @@ class FusionDecisionEngine:
                 else "尚未發現價格風險"
             ),
             "market_price_source": market_price_source,
-            "risk_score": 90.0 if has_price_risk else 20.0,
+            "risk_score": base_score,
             "reason": (
                 "商品售價脫離正常範圍"
                 if has_price_risk
@@ -299,11 +380,7 @@ class FusionDecisionEngine:
         if not needs_deep_analysis:
             decision: dict[str, Any] = {
                 **base_result,
-                "risk_label": (
-                    "高風險"
-                    if has_price_risk
-                    else "低風險"
-                ),
+                "risk_label": self._risk_label_from_score(base_score),
                 "evidence": ["商品資訊與價格資料完整"],
                 "confidence": 0.9,
                 "decision_layer": "fast",

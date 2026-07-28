@@ -2,7 +2,7 @@ from backend.services.image_price_service.category.registry import CategoryRegis
 
 from backend.services.dto.price_analysis import ProductIdentification
 from backend.services.image_price_service.image_price_analyzer import ImagePriceAnalyzer
-from backend.services.image_price_service.models import MarketplaceCondition
+from backend.services.image_price_service.domain.models import MarketplaceCondition
 
 
 class _FakeOCR:

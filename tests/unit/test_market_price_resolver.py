@@ -1,4 +1,4 @@
-from backend.services.image_price_service.models import MarketplaceCondition
+from backend.services.image_price_service.domain.models import MarketplaceCondition
 from backend.services.image_price_service.pricing.market_price_resolver import (
     resolve_market_price,
 )

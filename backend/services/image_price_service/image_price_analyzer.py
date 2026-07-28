@@ -7,11 +7,14 @@ from backend.config import settings
 from backend.repository.case_repository import case_repository
 from backend.services.dto.price_analysis import ImagePriceAnalysisResult
 from backend.services.image_price_service.case_recorder import record_case
-from backend.services.image_price_service.models import (
+from backend.services.image_price_service.domain.models import (
     MainPriceExtractionError,
     MainPriceExtractionResult,
     MarketplaceCondition,
     MarketplaceLayout,
+)
+from backend.services.image_price_service.domain.policy import (
+    DEFAULT_PRICE_RISK_POLICY,
 )
 from backend.services.image_price_service.ocr.ocr_service import (
     extract_ocr_document,
@@ -29,16 +32,23 @@ from backend.services.image_price_service.pricing.market_price_resolver import (
     resolve_market_price,
 )
 from backend.services.image_price_service.pricing.online_marketprice_service import (
-    online_marketprice_service as default_online_price_service,
+    OnlineMarketPriceService,
 )
 from backend.services.image_price_service.product.product_identifier import (
     product_identifier as default_product_identifier,
 )
 from backend.services.image_price_service.risk.fusion_decision_engine import (
-    fusion_decision_engine as default_decision_engine,
+    FusionDecisionEngine,
 )
 
 logger = logging.getLogger(__name__)
+
+default_online_price_service = OnlineMarketPriceService(
+    policy=DEFAULT_PRICE_RISK_POLICY,
+)
+default_decision_engine = FusionDecisionEngine(
+    policy=DEFAULT_PRICE_RISK_POLICY,
+)
 
 
 class ImagePriceAnalyzer:
@@ -117,7 +127,7 @@ class ImagePriceAnalyzer:
             reason=message,
             confidence=0.0,
             evidence=evidence,
-            decision_layer="source_validation",
+            decision_layer="decision_error",
             search_tool="unused",
             marketplace_layout=layout,
             marketplace_confidence=marketplace_confidence,
@@ -129,6 +139,15 @@ class ImagePriceAnalyzer:
                 extraction.condition
                 if extraction
                 else MarketplaceCondition.UNKNOWN
+            ),
+            condition_detail=extraction.condition_detail if extraction else "",
+            condition_source_text=(
+                extraction.condition_source_text if extraction else ""
+            ),
+            condition_extraction_confidence=(
+                extraction.condition_extraction_confidence
+                if extraction
+                else 0.0
             ),
             extraction_warnings=extraction.warnings if extraction else [],
         )
@@ -241,14 +260,16 @@ class ImagePriceAnalyzer:
         insufficient_search_results = (
             settings.ONLINE_PRICE_ENABLED and search_tool == "unused"
         )
+        decision_error_code: str | None = None
         if insufficient_search_results:
+            decision_error_code = "MARKET_PRICE_NOT_FOUND"
             decision = {
                 "risk_label": "UNKNOWN",
                 "risk_score": "未知",
                 "reason": "未知商品，搜索結果過少",
                 "evidence": ["線上查價結果不足"],
                 "confidence": 0.0,
-                "decision_layer": "source_validation",
+                "decision_layer": "decision_error",
             }
             resolved_condition = MarketplaceCondition.UNKNOWN
         else:
@@ -272,7 +293,7 @@ class ImagePriceAnalyzer:
             content_type=content_type,
             extracted_text=text,
             success=True,
-            error_code=None,
+            error_code=decision_error_code,
             message=None,
             product_name=product_name,
             brand_model=product.brand_model,
@@ -293,6 +314,11 @@ class ImagePriceAnalyzer:
             price_extraction_reason=extraction.reason,
             seller_name=extraction.seller_name,
             condition=resolved_condition,
+            condition_detail=extraction.condition_detail,
+            condition_source_text=extraction.condition_source_text,
+            condition_extraction_confidence=(
+                extraction.condition_extraction_confidence
+            ),
             extraction_warnings=extraction.warnings,
         )
 

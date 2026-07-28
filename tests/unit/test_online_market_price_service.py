@@ -3,7 +3,7 @@ import json
 import pytest
 from pydantic import SecretStr
 
-from backend.services.image_price_service.models import MarketplaceCondition
+from backend.services.image_price_service.domain.models import MarketplaceCondition
 from backend.services.image_price_service.pricing import (
     online_marketprice_service,
 )

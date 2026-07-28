@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.services.dto.price_analysis import MarketPriceSource, SearchTool
-from backend.services.image_price_service.models import MarketplaceCondition
+from backend.services.image_price_service.domain.models import MarketplaceCondition
 
 
 class ImageUploadResponse(BaseModel):

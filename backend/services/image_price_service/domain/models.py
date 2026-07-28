@@ -3,7 +3,11 @@
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from backend.services.image_price_service.domain.policy import (
+    DEFAULT_PRICE_RISK_POLICY,
+)
 
 
 class MarketplaceCondition(str, Enum):
@@ -111,9 +115,30 @@ class MainPriceExtractionResult(BaseModel):
     product_name: str | None = None
     seller_name: str | None = None
     condition: MarketplaceCondition = MarketplaceCondition.UNKNOWN
-    condition_confidence: float = 0.0
+    condition_detail: str = ""
+    condition_source_text: str = ""
+    condition_extraction_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "只代表 extractor 擷取商品狀態的可信度，不代表商品匹配、"
+            "市場資料或價格風險可信度"
+        ),
+    )
     warnings: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def validate_supported_listing_price(self) -> "MainPriceExtractionResult":
+        """將超出服務上限的刊登價格標記為明確的擷取錯誤。"""
+        if (
+            self.price is not None
+            and self.price
+            > DEFAULT_PRICE_RISK_POLICY.maximum_supported_price
+        ):
+            self.error_code = "PRICE_OUT_OF_SUPPORTED_RANGE"
+            self.message = "刊登價格超出商品價格驗證服務支援範圍"
+        return self
 
 class MainPriceExtractionError(ValueError):
     """表示主價格不存在或擷取信心不足。"""

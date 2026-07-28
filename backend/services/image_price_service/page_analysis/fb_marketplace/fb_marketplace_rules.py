@@ -2,12 +2,15 @@
 
 import re
 
-from backend.services.image_price_service.models import (
+from backend.services.image_price_service.domain.models import (
     MarketplaceCondition,
     MarketplaceLayout,
     OCRDocument,
     OCRTextBlock,
     PriceSection,
+)
+from backend.services.image_price_service.domain.policy import (
+    DEFAULT_PRICE_RISK_POLICY,
 )
 from backend.services.image_price_service.ocr.ocr_text_utils import (
     normalize_display_text,
@@ -316,7 +319,11 @@ class FBMarketplaceRules:
         """套用 FB Marketplace 的價格候選排除規則。"""
         if not NT_MAIN_PRICE_RE.fullmatch(match.group("currency")):
             return "商品主價格必須以 NT$ 開頭"
-        if amount < 100 or amount > 2_000_000:
+        if (
+            amount < 1
+            or amount
+            > DEFAULT_PRICE_RISK_POLICY.maximum_supported_price
+        ):
             return "價格超出支援範圍"
         if is_range:
             return "出價或多價格範圍不可作為商品主價格"
