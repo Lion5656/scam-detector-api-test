@@ -5,7 +5,11 @@ from typing import Any
 
 from backend.config import settings
 from backend.repository.case_repository import case_repository
-from backend.services.dto.price_analysis import ImagePriceAnalysisResult
+from backend.services.dto.price_analysis import (
+    ImagePriceAnalysisResult,
+    MarketPriceSource,
+    SearchTool,
+)
 from backend.services.image_price_service.case_recorder import record_case
 from backend.services.image_price_service.domain.models import (
     MainPriceExtractionError,
@@ -246,7 +250,7 @@ class ImagePriceAnalyzer:
 
         product_name = extraction.product_name
         product = self._product_identifier.identify(product_name)
-        market_price, market_price_source, search_tool = resolve_market_price(
+        market_estimates = resolve_market_price(
             self._online_price_service,
             product_name,
             product.brand_model,
@@ -255,10 +259,31 @@ class ImagePriceAnalyzer:
             condition=extraction.condition,
             condition_text=product_name,
         )
+        market_estimate = (
+            market_estimates[0]
+            if len(market_estimates) == 1
+            else None
+        )
+        market_price = (
+            market_estimate.median_price
+            if market_estimate is not None
+            and market_estimate.status == "success"
+            else 0
+        )
+        market_price_source: MarketPriceSource = (
+            market_estimate.source
+            if market_estimate is not None
+            else "not_evaluated"
+        )
+        search_tool: SearchTool = "unused"
         selling_price = extraction.price
 
         insufficient_search_results = (
-            settings.ONLINE_PRICE_ENABLED and search_tool == "unused"
+            settings.ONLINE_PRICE_ENABLED
+            and (
+                market_estimate is None
+                or market_estimate.status != "success"
+            )
         )
         decision_error_code: str | None = None
         if insufficient_search_results:

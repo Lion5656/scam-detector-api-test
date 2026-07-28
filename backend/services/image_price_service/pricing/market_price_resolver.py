@@ -1,9 +1,9 @@
-"""解析商品市場價格，並在線上查價失敗時套用本地參考價。"""
+"""解析結構化市場價格，並完整保留未知品況的雙路徑結果。"""
 
 from typing import Any
 
 from backend.config import settings
-from backend.services.dto.price_analysis import MarketPriceSource, SearchTool
+from backend.services.dto.price_analysis import MarketPriceEstimate
 from backend.services.image_price_service.domain.models import MarketplaceCondition
 
 
@@ -15,8 +15,8 @@ def resolve_market_price(
     search_query: str = "",
     condition: MarketplaceCondition = MarketplaceCondition.NEW,
     condition_text: str = "",
-) -> tuple[int, MarketPriceSource, SearchTool]:
-    """取得線上市價，失敗時改用本地參考價。"""
+) -> tuple[MarketPriceEstimate, ...]:
+    """取得市場估計；UNKNOWN 保留 NEW、USED 兩個獨立結果。"""
     if settings.ONLINE_PRICE_ENABLED:
         query = (
             search_query
@@ -26,13 +26,32 @@ def resolve_market_price(
                 else product_name
             )
         )
-        online_price, search_tool = online_price_service.estimate_price(
+        return online_price_service.estimate_prices(
             query,
             max_results=settings.ONLINE_PRICE_MAX_RESULTS,
             condition=condition,
             condition_text=condition_text,
         )
-        if online_price > 0:
-            return online_price, "online", search_tool
 
-    return fallback_price, "fallback_local", "unused"
+    supported_fallback = max(
+        0,
+        min(
+            int(fallback_price),
+            online_price_service.policy.maximum_supported_price,
+        ),
+    )
+    return (
+        MarketPriceEstimate(
+            status="success" if supported_fallback > 0 else "not_found",
+            condition=condition,
+            reference_mode="median_low_sample",
+            median_price=supported_fallback,
+            low_price=supported_fallback,
+            high_price=supported_fallback,
+            sample_count=1 if supported_fallback > 0 else 0,
+            site_count=1 if supported_fallback > 0 else 0,
+            source="fallback_local",
+            confidence=0.0,
+            candidates=(),
+        ),
+    )

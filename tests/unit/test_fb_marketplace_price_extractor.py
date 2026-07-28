@@ -311,7 +311,9 @@ def test_extracts_reference_listing_title_seller_and_used_condition_from_descrip
     assert result.source_text == "NT$13,000"
     assert result.seller_name == "Wei-Cheng Fang"
     assert result.condition is MarketplaceCondition.USED
-    assert result.condition_confidence == 0.82
+    assert result.condition_detail == "2020全新品購入，良好使用，無修無拆無換。"
+    assert result.condition_source_text == "2020全新品購入，良好使用，無修無拆無換。"
+    assert result.condition_extraction_confidence == 0.82
     assert result.warnings == []
 
 
@@ -330,10 +332,42 @@ def test_explicit_detail_condition_has_priority_over_description():
     result = FBMarketplacePriceExtractor().extract(OCRDocument(text=text), detection)
 
     assert result.condition is MarketplaceCondition.USED
-    assert result.condition_confidence == 0.97
+    assert result.condition_detail == "近全新"
+    assert result.condition_source_text == "狀況 二手・近全新"
+    assert result.condition_extraction_confidence == 0.97
 
 
-def test_missing_condition_defaults_to_new_with_lower_confidence_warning():
+@pytest.mark.parametrize(
+    ("detail", "expected_detail"),
+    [
+        ("狀況 二手・近全新", "近全新"),
+        ("狀況 二手・良好", "良好"),
+        ("狀況 二手・尚可", "尚可"),
+        ("狀態 良好", "良好"),
+    ],
+)
+def test_explicit_used_condition_preserves_grade(detail, expected_detail):
+    text = f"""Sony PS5
+NT$12,500
+發送訊息給賣家
+詳細內容
+{detail}"""
+    detection = DetectionResult(
+        is_marketplace=True,
+        layout="mobile",
+        confidence=0.9,
+        evidence=[],
+    )
+
+    result = FBMarketplacePriceExtractor().extract(OCRDocument(text=text), detection)
+
+    assert result.condition is MarketplaceCondition.USED
+    assert result.condition_detail == expected_detail
+    assert result.condition_source_text == detail
+    assert result.condition_extraction_confidence == 0.97
+
+
+def test_missing_condition_returns_unknown_without_defaulting_to_new():
     text = MACBOOK_TEXT.replace(
         "2020全新品購入，良好使用，無修無拆無換。",
         "歡迎私訊了解商品",
@@ -347,9 +381,11 @@ def test_missing_condition_defaults_to_new_with_lower_confidence_warning():
 
     result = FBMarketplacePriceExtractor().extract(OCRDocument(text=text), detection)
 
-    assert result.condition is MarketplaceCondition.NEW
-    assert result.condition_confidence == 0.35
-    assert result.warnings == ["未找到明確商品狀況，依規則預設為全新"]
+    assert result.condition is MarketplaceCondition.UNKNOWN
+    assert result.condition_detail == ""
+    assert result.condition_source_text == ""
+    assert result.condition_extraction_confidence == 0.0
+    assert result.warnings == ["未找到明確商品狀況"]
 
 
 def test_detail_used_condition_overrides_title_full_new():
@@ -376,7 +412,9 @@ NT$9,500
 
     assert result.product_name == "Nintendo Switch OLED 全新未拆"
     assert result.condition is MarketplaceCondition.USED
-    assert result.condition_confidence == 0.97
+    assert result.condition_detail == "二手"
+    assert result.condition_source_text == "狀況 二手"
+    assert result.condition_extraction_confidence == 0.97
 
 
 def test_title_2hand_and_grade_condition_is_used():
@@ -403,7 +441,9 @@ NT$12,500
 
     assert result.product_name == "Sony PS5 2手 9成新"
     assert result.condition is MarketplaceCondition.USED
-    assert result.condition_confidence == 0.99
+    assert result.condition_detail == "Sony PS5 2手 9成新"
+    assert result.condition_source_text == "Sony PS5 2手 9成新"
+    assert result.condition_extraction_confidence == 0.99
 
 
 def test_detail_new_condition_on_separate_line_overrides_title_used():
@@ -431,7 +471,9 @@ NT$1,725
 
     assert result.product_name == "尼卡魯夫公仔 2手 9成新"
     assert result.condition is MarketplaceCondition.NEW
-    assert result.condition_confidence == 0.97
+    assert result.condition_detail == "全新"
+    assert result.condition_source_text == "狀況 全新"
+    assert result.condition_extraction_confidence == 0.97
 
 
 def test_non_marketplace_source_is_rejected():

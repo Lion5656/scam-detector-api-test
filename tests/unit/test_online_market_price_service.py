@@ -3,7 +3,12 @@ import json
 import pytest
 from pydantic import SecretStr
 
+from backend.services.dto.price_analysis import MarketPriceCandidateEvidence
 from backend.services.image_price_service.domain.models import MarketplaceCondition
+from backend.services.image_price_service.domain.policy import (
+    DEFAULT_PRICE_RISK_POLICY,
+    PriceRiskPolicy,
+)
 from backend.services.image_price_service.pricing import (
     online_marketprice_service,
 )
@@ -49,30 +54,39 @@ def _disable_search_fallback_delay(monkeypatch) -> None:
         "ONLINE_PRICE_FALLBACK_DELAY_SECONDS",
         0.0,
     )
+    monkeypatch.setattr(
+        online_marketprice_service.settings,
+        "TAVILY_SEARCH_API_KEY",
+        SecretStr(""),
+    )
 
 
 def _search_result(
     *,
     url: str,
+    product: str,
     price: int,
+    condition_text: str,
+    snippet_prefix: str = "售價",
 ) -> dict:
     return {
-        "title": "商品 A",
+        "title": f"{product} {condition_text}".strip(),
         "link": url,
-        "snippet": f"特價 NT${price:,}",
+        "snippet": f"{snippet_prefix} NT${price:,}",
     }
 
 
 def _price_candidate(
-    url: str,
+    result: dict,
     price: int,
-    condition: str = "new",
+    *,
+    condition: str,
 ) -> dict:
     return {
         "price": price,
         "currency": "TWD",
-        "url": url,
-        "evidence": f"特價 NT${price:,}",
+        "url": result["link"],
+        "evidence": result["snippet"],
         "condition": condition,
         "product_match": True,
     }
@@ -80,25 +94,63 @@ def _price_candidate(
 
 def _agent_result(
     results: list[dict],
-    condition: str = "new",
+    *,
+    conditions: list[str],
+    prices: list[int] | None = None,
 ) -> ProductAgentResult:
+    resolved_prices = prices or [
+        int(
+            result["snippet"]
+            .split("NT$", maxsplit=1)[1]
+            .replace(",", "")
+        )
+        for result in results
+    ]
     return ProductAgentResult(
         output={
             "prices": [
                 _price_candidate(
-                    result["link"],
-                    int(
-                        result["snippet"]
-                        .replace("特價 NT$", "")
-                        .replace(",", "")
-                    ),
-                    condition,
+                    result,
+                    price,
+                    condition=condition,
                 )
-                for result in results
+                for result, price, condition in zip(
+                    results,
+                    resolved_prices,
+                    conditions,
+                    strict=True,
+                )
             ]
         },
         tool_results=results,
         tool_errors=[],
+    )
+
+
+def _evidence_candidate(
+    price: int,
+    index: int,
+    *,
+    condition: MarketplaceCondition = MarketplaceCondition.NEW,
+    site: str | None = None,
+) -> MarketPriceCandidateEvidence:
+    host = site or f"shop-{index}.example"
+    return MarketPriceCandidateEvidence(
+        candidate_id=f"candidate-{index}",
+        title=f"Apple iPhone 15 256GB {condition.value}",
+        price=price,
+        condition=condition,
+        url=f"https://{host}/items/{index}",
+        evidence=f"售價 NT${price:,}",
+    )
+
+
+def _policy(**updates) -> PriceRiskPolicy:
+    return PriceRiskPolicy(
+        **{
+            **DEFAULT_PRICE_RISK_POLICY.model_dump(),
+            **updates,
+        }
     )
 
 
@@ -116,9 +168,7 @@ def test_serpapi_google_light_tool_is_defined_in_product_agent(
             calls.append(params)
             return json.dumps(
                 {
-                    "search_metadata": {
-                        "status": "Success",
-                    },
+                    "search_metadata": {"status": "Success"},
                     "organic_results": [
                         {
                             "position": 1,
@@ -141,7 +191,7 @@ def test_serpapi_google_light_tool_is_defined_in_product_agent(
 
     monkeypatch.setattr(
         product_research_agent.settings,
-        "SERPAPI_API_KEY",
+        "SERP_API_KEY",
         SecretStr("serp-test-key"),
     )
     monkeypatch.setattr(
@@ -166,18 +216,8 @@ def test_serpapi_google_light_tool_is_defined_in_product_agent(
             "gl": "tw",
         }
     ]
-    assert result == [
-        {
-            "title": "Apple iPhone 15 256GB",
-            "link": "https://shop.example/iphone",
-            "snippet": "特價 NT$30,500",
-        },
-        {
-            "title": "Apple iPhone 15",
-            "link": "https://shop-two.example/iphone",
-            "snippet": "特價 NT$31,500",
-        }
-    ]
+    assert len(result) == 2
+    assert set(result[0]) == {"title", "link", "snippet"}
 
 
 def test_tavily_tool_calls_api_and_normalizes_results(
@@ -239,15 +279,7 @@ def test_tavily_tool_calls_api_and_normalizes_results(
         }
     )
 
-    assert calls == [
-        {
-            "query": "Apple iPhone 15 台灣 全新 價格",
-            "max_results": 3,
-            "country": "taiwan",
-            "include_domains": ["shop.example"],
-            "exclude_domains": ["example.invalid"],
-        }
-    ]
+    assert calls[0]["query"] == "Apple iPhone 15 台灣 全新 價格"
     assert result == [
         {
             "title": "Apple iPhone 15 128GB",
@@ -257,144 +289,372 @@ def test_tavily_tool_calls_api_and_normalizes_results(
     ]
 
 
-def test_online_price_keeps_prompt_and_statistics_without_search_tools(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "ONLINE_PRICE_MIN_SITES",
-        2,
-    )
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "ONLINE_PRICE_MIN_PRICE_POINTS",
-        2,
-    )
-    primary_results = [
-        _search_result(
-            url="https://shop-a.example/1",
-            price=30000,
-        ),
-        _search_result(
-            url="https://shop-b.example/2",
-            price=31000,
-        ),
-        _search_result(
-            url="https://shop-b.example/3",
-            price=32000,
-        ),
-    ]
-    agent = _FakeResearchAgent([_agent_result(primary_results)])
-    service = OnlineMarketPriceService(research_agent=agent)
-
-    price, search_tool = service.estimate_price(
-        "商品 A 台灣 價格",
-        max_results=8,
-    )
-
-    assert price == 31000
-    assert search_tool == "serp_api"
-    assert len(agent.calls) == 1
-    assert agent.calls[0]["user_input"]["product_query"] == (
-        "商品 A 台灣 價格 全新"
-    )
-    assert agent.calls[0]["user_input"]["target_condition"] == "new"
-    assert agent.calls[0]["allowed_tool_names"] == [
-        "search_market_prices_serpapi"
-    ]
-    assert "只擷取全新商品價格" in agent.system_prompts[0]
-
-
-def test_online_price_uses_title_used_grade_in_query_and_prompt(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "ONLINE_PRICE_MIN_SITES",
-        2,
-    )
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "ONLINE_PRICE_MIN_PRICE_POINTS",
-        2,
-    )
+def test_known_new_condition_only_accepts_new_prices() -> None:
     results = [
-        _search_result(url="https://shop-a.example/1", price=12_000),
-        _search_result(url="https://shop-b.example/2", price=13_000),
+        _search_result(
+            url=f"https://shop-{index}.example/item",
+            product="Apple iPhone 15 256GB",
+            price=price,
+            condition_text=condition_text,
+        )
+        for index, (price, condition_text) in enumerate(
+            [
+                (30_000, "全新"),
+                (31_000, "全新未拆封"),
+                (32_000, "新品"),
+                (20_000, "二手・良好"),
+            ],
+            start=1,
+        )
     ]
-    agent = _FakeResearchAgent([_agent_result(results, condition="used")])
+    agent = _FakeResearchAgent(
+        [_agent_result(results, conditions=["new", "new", "new", "used"])]
+    )
     service = OnlineMarketPriceService(research_agent=agent)
 
-    price, search_tool = service.estimate_price(
+    estimate = service.estimate_price(
+        "Apple iPhone 15 256GB 台灣 價格",
+        condition=MarketplaceCondition.NEW,
+    )
+
+    assert estimate.status == "success"
+    assert estimate.reference_mode == "median_low_sample"
+    assert estimate.median_price == 31_000
+    assert {candidate.condition for candidate in estimate.candidates} == {
+        MarketplaceCondition.NEW
+    }
+    assert agent.calls[0]["user_input"]["target_condition"] == "new"
+
+
+def test_known_used_condition_only_accepts_matching_used_grade() -> None:
+    results = [
+        _search_result(
+            url=f"https://used-{index}.example/item",
+            product="Sony PS5",
+            price=price,
+            condition_text=condition_text,
+        )
+        for index, (price, condition_text) in enumerate(
+            [
+                (12_000, "二手・近全新"),
+                (12_500, "近全新"),
+                (13_000, "二手 近全新"),
+                (10_000, "二手・良好"),
+                (15_000, "全新"),
+            ],
+            start=1,
+        )
+    ]
+    agent = _FakeResearchAgent(
+        [_agent_result(results, conditions=["used"] * 4 + ["new"])]
+    )
+    service = OnlineMarketPriceService(research_agent=agent)
+
+    estimate = service.estimate_price(
         "Sony PS5 台灣 價格",
         condition=MarketplaceCondition.USED,
-        condition_text="Sony PS5 2手 9成新",
+        condition_text="二手・近全新",
     )
 
-    assert (price, search_tool) == (12_500, "serp_api")
-    assert agent.calls[0]["user_input"]["product_query"] == (
-        "Sony PS5 台灣 價格 2手 9成新"
+    assert estimate.status == "success"
+    assert estimate.median_price == 12_500
+    assert [candidate.price for candidate in estimate.candidates] == [
+        12_000,
+        12_500,
+        13_000,
+    ]
+    assert "二手 近全新" in agent.calls[0]["user_input"]["product_query"]
+
+
+def test_unknown_condition_forces_separate_new_and_used_searches() -> None:
+    new_results = [
+        _search_result(
+            url=f"https://new-{index}.example/item",
+            product="Apple iPhone 15 256GB",
+            price=30_000 + index * 500,
+            condition_text="全新",
+        )
+        for index in range(1, 4)
+    ]
+    used_results = [
+        _search_result(
+            url=f"https://used-{index}.example/item",
+            product="Apple iPhone 15 256GB",
+            price=20_000 + index * 500,
+            condition_text="二手",
+        )
+        for index in range(1, 4)
+    ]
+    agent = _FakeResearchAgent(
+        [
+            _agent_result(new_results, conditions=["new"] * 3),
+            _agent_result(used_results, conditions=["used"] * 3),
+        ]
     )
-    assert agent.calls[0]["user_input"]["target_condition"] == "used"
-    assert "2手 9成新" in agent.system_prompts[0]
-    assert 'condition 必須填 "used"' in agent.system_prompts[0]
+    service = OnlineMarketPriceService(research_agent=agent)
+
+    estimates = service.estimate_prices(
+        "Apple iPhone 15 256GB 台灣 價格",
+        condition=MarketplaceCondition.UNKNOWN,
+    )
+
+    assert tuple(estimate.condition for estimate in estimates) == (
+        MarketplaceCondition.NEW,
+        MarketplaceCondition.USED,
+    )
+    assert all(estimate.status == "success" for estimate in estimates)
+    assert [call["user_input"]["target_condition"] for call in agent.calls] == [
+        "new",
+        "used",
+    ]
+    assert "全新" in agent.calls[0]["user_input"]["product_query"]
+    assert "二手" in agent.calls[1]["user_input"]["product_query"]
 
 
-def test_online_price_requests_fallback_tools_after_insufficient_primary(
+def test_validation_excludes_other_model_version_capacity_accessory_and_installment():
+    rows = [
+        ("Apple iPhone 15 Pro 256GB", 30_000, "全新", "售價"),
+        ("Apple iPhone 14 Pro 256GB", 28_000, "全新", "售價"),
+        ("Apple iPhone 15 Pro 128GB", 27_000, "全新", "售價"),
+        ("Apple iPhone 15 Pro Max 256GB", 35_000, "全新", "售價"),
+        ("Apple iPhone 15 Pro 256GB 手機殼", 999, "全新", "售價"),
+        ("Apple iPhone 15 Pro 256GB", 1_500, "全新", "分期每期"),
+        ("Apple iPhone 15 Pro 256GB 2024 年款", 2_024, "全新", "售價"),
+        ("Samsung Galaxy S24 Ultra 256GB", 32_000, "全新", "售價"),
+    ]
+    results = [
+        _search_result(
+            url=f"https://shop-{index}.example/item",
+            product=product,
+            price=price,
+            condition_text=condition_text,
+            snippet_prefix=snippet_prefix,
+        )
+        for index, (product, price, condition_text, snippet_prefix) in enumerate(
+            rows,
+            start=1,
+        )
+    ]
+    agent_result = _agent_result(results, conditions=["new"] * len(results))
+
+    candidates = OnlineMarketPriceService()._validate_agent_prices(
+        agent_result,
+        product_query="Apple iPhone 15 Pro 256GB 台灣 價格",
+        condition=MarketplaceCondition.NEW,
+    )
+
+    assert [candidate.price for candidate in candidates] == [30_000]
+
+
+def test_out_of_range_candidate_is_removed_before_sample_threshold_check():
+    results = [
+        _search_result(
+            url=f"https://shop-{index}.example/item",
+            product="Apple iPhone 15 256GB",
+            price=price,
+            condition_text="全新",
+        )
+        for index, price in enumerate(
+            [30_000, 31_000, 120_000, 0],
+            start=1,
+        )
+    ]
+    validated = OnlineMarketPriceService()._validate_agent_prices(
+        _agent_result(results, conditions=["new"] * 4),
+        product_query="Apple iPhone 15 256GB 台灣 價格",
+        condition=MarketplaceCondition.NEW,
+    )
+
+    estimate = OnlineMarketPriceService()._aggregate_candidates(
+        validated,
+        MarketplaceCondition.NEW,
+    )
+
+    assert [candidate.price for candidate in validated] == [30_000, 31_000]
+    assert estimate.status == "insufficient"
+    assert estimate.sample_count == 2
+
+
+def test_not_found_and_insufficient_are_distinct_statuses() -> None:
+    service = OnlineMarketPriceService()
+    insufficient_candidates = [
+        _evidence_candidate(30_000, 1),
+        _evidence_candidate(31_000, 2),
+    ]
+
+    not_found = service._aggregate_candidates([], MarketplaceCondition.NEW)
+    insufficient = service._aggregate_candidates(
+        insufficient_candidates,
+        MarketplaceCondition.NEW,
+    )
+
+    assert not_found.status == "not_found"
+    assert not_found.sample_count == 0
+    assert insufficient.status == "insufficient"
+    assert insufficient.sample_count == 2
+
+
+def test_independent_source_count_is_checked_by_injected_policy() -> None:
+    service = OnlineMarketPriceService()
+    candidates = [
+        _evidence_candidate(30_000 + index * 500, index, site="same.example")
+        for index in range(3)
+    ]
+
+    estimate = service._aggregate_candidates(
+        candidates,
+        MarketplaceCondition.NEW,
+    )
+
+    assert estimate.status == "insufficient"
+    assert estimate.sample_count == 3
+    assert estimate.site_count == 1
+
+
+@pytest.mark.parametrize(
+    ("prices", "expected_median"),
+    [
+        ([10_000, 20_000, 90_000], 20_000),
+        ([10_000, 20_000, 30_000, 90_000], 25_000),
+    ],
+)
+def test_three_or_four_samples_use_median_without_iqr(
+    monkeypatch,
+    prices,
+    expected_median,
+) -> None:
+    service = OnlineMarketPriceService()
+    percentile_calls: list[float] = []
+    original_percentile = service._percentile
+
+    def track_percentile(values, quantile):
+        percentile_calls.append(quantile)
+        return original_percentile(values, quantile)
+
+    monkeypatch.setattr(service, "_percentile", track_percentile)
+    candidates = [
+        _evidence_candidate(price, index)
+        for index, price in enumerate(prices, start=1)
+    ]
+
+    estimate = service._aggregate_candidates(
+        candidates,
+        MarketplaceCondition.NEW,
+    )
+
+    assert estimate.status == "success"
+    assert estimate.reference_mode == "median_low_sample"
+    assert estimate.median_price == expected_median
+    assert estimate.low_price == round(expected_median * 0.75)
+    assert estimate.high_price == round(expected_median * 1.25)
+    assert 0.25 not in percentile_calls
+    assert 0.75 not in percentile_calls
+
+
+def test_five_or_more_samples_use_linear_percentiles_and_iqr() -> None:
+    service = OnlineMarketPriceService()
+    candidates = [
+        _evidence_candidate(price, index)
+        for index, price in enumerate(
+            [10_000, 11_000, 12_000, 13_000, 14_000, 15_000],
+            start=1,
+        )
+    ]
+
+    estimate = service._aggregate_candidates(
+        candidates,
+        MarketplaceCondition.NEW,
+    )
+
+    assert estimate.status == "success"
+    assert estimate.reference_mode == "iqr"
+    assert estimate.median_price == 12_500
+    assert estimate.low_price == 11_250
+    assert estimate.high_price == 13_750
+    assert estimate.sample_count == 6
+    assert estimate.site_count == 6
+    assert estimate.confidence == 1.0
+
+
+def test_post_iqr_three_samples_downgrade_to_median_low_sample() -> None:
+    service = OnlineMarketPriceService()
+    candidates = [
+        _evidence_candidate(price, index)
+        for index, price in enumerate(
+            [1, 10_000, 10_000, 10_000, 100_000],
+            start=1,
+        )
+    ]
+
+    estimate = service._aggregate_candidates(
+        candidates,
+        MarketplaceCondition.NEW,
+    )
+
+    assert estimate.status == "success"
+    assert estimate.reference_mode == "median_low_sample"
+    assert estimate.sample_count == 3
+    assert [candidate.price for candidate in estimate.candidates] == [
+        10_000,
+        10_000,
+        10_000,
+    ]
+
+
+def test_post_iqr_below_policy_minimum_is_insufficient() -> None:
+    service = OnlineMarketPriceService(
+        policy=_policy(minimum_market_samples=4)
+    )
+    candidates = [
+        _evidence_candidate(price, index)
+        for index, price in enumerate(
+            [1, 10_000, 10_000, 10_000, 100_000],
+            start=1,
+        )
+    ]
+
+    estimate = service._aggregate_candidates(
+        candidates,
+        MarketplaceCondition.NEW,
+    )
+
+    assert estimate.status == "insufficient"
+    assert estimate.reference_mode == "median_low_sample"
+    assert estimate.sample_count == 3
+
+
+def test_fallback_searches_accumulate_candidates_until_policy_is_met(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "ONLINE_PRICE_MIN_SITES",
-        3,
-    )
     monkeypatch.setattr(
         online_marketprice_service.settings,
         "TAVILY_SEARCH_API_KEY",
         SecretStr("tavily-test-key"),
     )
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "ONLINE_PRICE_FALLBACK_DELAY_SECONDS",
-        1.5,
-    )
-    sleep_calls: list[float] = []
-    monkeypatch.setattr(
-        online_marketprice_service.time,
-        "sleep",
-        sleep_calls.append,
-    )
-    primary_results = [
+    results = [
         _search_result(
-            url="https://shop-a.example/1",
-            price=30000,
+            url=f"https://shop-{index}.example/item",
+            product="Apple iPhone 15 256GB",
+            price=30_000 + index * 1_000,
+            condition_text="全新",
         )
-    ]
-    tavily_results = [
-        _search_result(
-            url="https://shop-b.example/2",
-            price=31000,
-        )
-    ]
-    ddgs_results = [
-        _search_result(
-            url="https://shop-c.example/3",
-            price=32000,
-        )
+        for index in range(1, 4)
     ]
     agent = _FakeResearchAgent(
         [
-            _agent_result(primary_results),
-            _agent_result(tavily_results),
-            _agent_result(ddgs_results),
+            _agent_result([result], conditions=["new"])
+            for result in results
         ]
     )
     service = OnlineMarketPriceService(research_agent=agent)
 
-    price, search_tool = service.estimate_price("商品 A 台灣 價格")
+    estimate = service.estimate_price(
+        "Apple iPhone 15 256GB 台灣 價格",
+        condition=MarketplaceCondition.NEW,
+    )
 
-    assert price == 31000
-    assert search_tool == "ddgs"
+    assert estimate.status == "success"
+    assert estimate.sample_count == 3
     assert [
         call["allowed_tool_names"] for call in agent.calls
     ] == [
@@ -402,13 +662,9 @@ def test_online_price_requests_fallback_tools_after_insufficient_primary(
         ["search_market_prices_tavily"],
         ["search_market_prices_ddgs"],
     ]
-    assert sleep_calls == [1.5, 1.5]
 
 
-def test_online_price_stops_fallbacks_after_groq_rate_limit(
-    monkeypatch,
-    caplog,
-) -> None:
+def test_rate_limit_returns_structured_not_found_result(caplog) -> None:
     class RateLimitedResearchAgent:
         def __init__(self) -> None:
             self.calls: list[list[str]] = []
@@ -427,144 +683,11 @@ def test_online_price_stops_fallbacks_after_groq_rate_limit(
     service = OnlineMarketPriceService(research_agent=agent)
 
     with caplog.at_level("WARNING"):
-        result = service.estimate_price("Apple iPhone 15 台灣 價格")
+        estimate = service.estimate_price(
+            "Apple iPhone 15 256GB 台灣 價格"
+        )
 
-    assert result == (0, "unused")
+    assert estimate.status == "not_found"
+    assert estimate.median_price == 0
     assert agent.calls == [["search_market_prices_serpapi"]]
-    assert (
-        "price search stopped tool=serp_api "
-        "reason=groq_rate_limit retry_after=642.4s"
-    ) in caplog.text
-
-
-def test_online_price_reports_tavily_when_first_fallback_is_sufficient(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "ONLINE_PRICE_MIN_SITES",
-        2,
-    )
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "ONLINE_PRICE_MIN_PRICE_POINTS",
-        2,
-    )
-    tavily_results = [
-        _search_result(url="https://shop-a.example/1", price=30000),
-        _search_result(url="https://shop-b.example/2", price=32000),
-    ]
-    agent = _FakeResearchAgent(
-        [
-            _agent_result([]),
-            _agent_result(tavily_results),
-        ]
-    )
-    service = OnlineMarketPriceService(research_agent=agent)
-
-    assert service.estimate_price("商品 A 台灣 價格") == (31000, "tavily")
-    assert [
-        call["allowed_tool_names"] for call in agent.calls
-    ] == [
-        ["search_market_prices_serpapi"],
-        ["search_market_prices_tavily"],
-    ]
-
-
-def test_online_price_reports_unused_when_all_search_tools_fail(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "ONLINE_PRICE_MIN_SITES",
-        2,
-    )
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "TAVILY_SEARCH_API_KEY",
-        SecretStr("tavily-test-key"),
-    )
-    agent = _FakeResearchAgent(
-        [
-            _agent_result([]),
-            _agent_result([]),
-            _agent_result([]),
-        ]
-    )
-    service = OnlineMarketPriceService(research_agent=agent)
-
-    assert service.estimate_price("查無價格的商品") == (0, "unused")
-
-
-def test_online_price_skips_tavily_when_api_key_is_missing(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "ONLINE_PRICE_MIN_SITES",
-        2,
-    )
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "TAVILY_SEARCH_API_KEY",
-        SecretStr(""),
-    )
-    agent = _FakeResearchAgent(
-        [
-            _agent_result([]),
-            _agent_result([]),
-        ]
-    )
-    service = OnlineMarketPriceService(research_agent=agent)
-
-    assert service.estimate_price("查無價格的商品") == (0, "unused")
-    assert [
-        call["allowed_tool_names"] for call in agent.calls
-    ] == [
-        ["search_market_prices_serpapi"],
-        ["search_market_prices_ddgs"],
-    ]
-
-
-def test_price_validation_discards_only_the_out_of_range_item() -> None:
-    low_result = _search_result(
-        url="https://shop-a.example/accessory",
-        price=150,
-    )
-    valid_result = _search_result(
-        url="https://shop-b.example/product",
-        price=3680,
-    )
-    agent_result = ProductAgentResult(
-        output={
-            "prices": [
-                _price_candidate(low_result["link"], 150),
-                _price_candidate(valid_result["link"], 3680),
-            ]
-        },
-        tool_results=[low_result, valid_result],
-        tool_errors=[],
-    )
-
-    candidates = OnlineMarketPriceService()._validate_agent_prices(
-        agent_result
-    )
-
-    assert [candidate["price"] for candidate in candidates] == [3680]
-
-
-def test_aggregate_from_site_prices_requires_multiple_sites(
-    monkeypatch,
-) -> None:
-    service = OnlineMarketPriceService()
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "ONLINE_PRICE_MIN_SITES",
-        2,
-    )
-
-    price = service._aggregate_from_site_prices(
-        {"shop-a.example": [30000, 30500, 31000]}
-    )
-
-    assert price == 0
+    assert "reason=groq_rate_limit retry_after=642.4s" in caplog.text

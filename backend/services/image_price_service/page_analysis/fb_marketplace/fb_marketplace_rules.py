@@ -67,6 +67,9 @@ USED_TERMS = (
     "使用過",
     "已使用",
     "良好使用",
+    "狀況良好",
+    "狀態良好",
+    "尚可",
     "使用痕跡",
     "無修無拆",
 )
@@ -194,8 +197,14 @@ class FBMarketplaceRules:
         cls,
         lines: list[str],
         product_title: str | None = None,
-    ) -> tuple[MarketplaceCondition, float, list[str]]:
-        """詳細資料品況優先，其次依標題、說明與預設規則判定。"""
+    ) -> tuple[
+        MarketplaceCondition,
+        str,
+        str,
+        float,
+        list[str],
+    ]:
+        """依詳細資料、標題、說明的優先序擷取有限狀態證據。"""
         detail_start = next(
             (
                 index
@@ -208,7 +217,8 @@ class FBMarketplaceRules:
         if detail_start is not None:
             detail_lines = lines[detail_start + 1:detail_start + 12]
             for index, line in enumerate(detail_lines):
-                if "狀況" not in re.sub(r"\s+", "", line):
+                compact_line = re.sub(r"\s+", "", line)
+                if "狀況" not in compact_line and "狀態" not in compact_line:
                     continue
                 value = line
                 if (
@@ -219,12 +229,26 @@ class FBMarketplaceRules:
                     value = f"{value} {detail_lines[index + 1]}"
                 condition = cls.condition_from_text(value)
                 if condition is not MarketplaceCondition.UNKNOWN:
-                    return condition, 0.97, []
+                    source_text = normalize_display_text(value)
+                    return (
+                        condition,
+                        cls._condition_detail(source_text, condition),
+                        source_text,
+                        0.97,
+                        [],
+                    )
 
         if product_title:
             title_condition = cls.condition_from_text(product_title)
             if title_condition is not MarketplaceCondition.UNKNOWN:
-                return title_condition, 0.99, []
+                source_text = normalize_display_text(product_title)
+                return (
+                    title_condition,
+                    cls._condition_detail(source_text, title_condition),
+                    source_text,
+                    0.99,
+                    [],
+                )
 
         description_start = next(
             (
@@ -243,17 +267,48 @@ class FBMarketplaceRules:
                 ):
                     break
                 description_lines.append(line)
-            condition = cls.condition_from_text(
-                " ".join(description_lines)
-            )
-            if condition is not MarketplaceCondition.UNKNOWN:
-                return condition, 0.82, []
+            for line in description_lines:
+                condition = cls.condition_from_text(line)
+                if condition is MarketplaceCondition.UNKNOWN:
+                    continue
+                source_text = normalize_display_text(line)
+                return (
+                    condition,
+                    cls._condition_detail(source_text, condition),
+                    source_text,
+                    0.82,
+                    [],
+                )
 
         return (
-            MarketplaceCondition.NEW,
-            0.35,
-            ["未找到明確商品狀況，依規則預設為全新"],
+            MarketplaceCondition.UNKNOWN,
+            "",
+            "",
+            0.0,
+            ["未找到明確商品狀況"],
         )
+
+    @staticmethod
+    def _condition_detail(
+        source_text: str,
+        condition: MarketplaceCondition,
+    ) -> str:
+        """從有限狀態原文保留可供查價使用的詳細描述。"""
+        detail = re.sub(
+            r"^(?:商品)?(?:狀況|狀態)\s*[:：・·-]?\s*",
+            "",
+            normalize_display_text(source_text),
+            flags=re.IGNORECASE,
+        ).strip()
+        if condition is MarketplaceCondition.USED:
+            without_generic_label = re.sub(
+                r"^(?:二\s*手|2\s*手|中古)\s*[:：・·-]?\s*",
+                "",
+                detail,
+                flags=re.IGNORECASE,
+            ).strip()
+            return without_generic_label or detail
+        return detail
 
     @classmethod
     def extract_seller_name(

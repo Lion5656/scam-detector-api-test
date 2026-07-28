@@ -274,7 +274,13 @@ class FBMarketplacePriceExtractor:
     ) -> MainPriceExtractionResult:
         """組裝成功的 Marketplace 商品資訊。"""
         product_name = collection.titles.get(id(selected))
-        condition, condition_confidence, warnings = (
+        (
+            condition,
+            condition_detail,
+            condition_source_text,
+            condition_confidence,
+            warnings,
+        ) = (
             self._rules.extract_condition(
                 lines,
                 product_name,
@@ -314,6 +320,8 @@ class FBMarketplacePriceExtractor:
             product_name=product_name,
             seller_name=seller_name,
             condition=condition,
+            condition_detail=condition_detail,
+            condition_source_text=condition_source_text,
             condition_extraction_confidence=condition_confidence,
             warnings=warnings,
         )
@@ -326,7 +334,13 @@ class FBMarketplacePriceExtractor:
         seller_name: str | None,
     ) -> NoReturn:
         """組裝失敗結果並中止後續商品分析。"""
-        condition, condition_confidence, warnings = (
+        (
+            condition,
+            condition_detail,
+            condition_source_text,
+            condition_confidence,
+            warnings,
+        ) = (
             self._rules.extract_condition(lines)
         )
         self._rules.append_missing_required_field_warnings(
@@ -361,6 +375,8 @@ class FBMarketplacePriceExtractor:
             ),
             seller_name=seller_name,
             condition=condition,
+            condition_detail=condition_detail,
+            condition_source_text=condition_source_text,
             condition_extraction_confidence=condition_confidence,
             warnings=warnings,
         )
