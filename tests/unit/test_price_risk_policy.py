@@ -5,9 +5,13 @@ from typing import get_args, get_origin
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from backend.services.dto.price_analysis import MarketPriceEstimate
 from backend.services.image_price_service.image_price_analyzer import (
     default_decision_engine,
     default_online_price_service,
+)
+from backend.services.image_price_service.domain.models import (
+    MarketplaceCondition,
 )
 from backend.services.image_price_service.domain.policy import (
     DEFAULT_PRICE_RISK_POLICY,
@@ -179,21 +183,16 @@ def test_application_assembly_and_fallback_use_the_shared_policy():
     decision_engine = FusionDecisionEngine(policy=policy)
     fallback = decision_engine._alt_deep_result(
         {
-            "risk_score": 45.0,
+            "risk_score": 55.0,
+            "risk_label": "MEDIUM",
             "reason": "價格規則結果",
-            "has_risk": "含價格風險",
-        },
-        {
-            "blacklist": 0,
-            "market_price": {
-                "price": 20_000,
-                "source": "online",
-            },
+            "evidence": [],
+            "confidence": 0.9,
         },
     )
 
     assert market_service.policy is decision_engine.policy is policy
-    assert fallback["risk_label"] == "低風險"
+    assert fallback["risk_label"] == "MEDIUM"
 
 
 def test_custom_policy_changes_price_boundary_label_and_deep_analysis(
@@ -207,30 +206,35 @@ def test_custom_policy_changes_price_boundary_label_and_deep_analysis(
             small_sample_score_cap=10,
         )
     )
-    default_engine = FusionDecisionEngine()
-    custom_engine = FusionDecisionEngine(policy=policy)
     default_calls: list[dict] = []
     custom_calls: list[dict] = []
-
-    monkeypatch.setattr(default_engine, "_run_blacklist_hit", lambda _text: 0)
-    monkeypatch.setattr(custom_engine, "_run_blacklist_hit", lambda _text: 0)
-    monkeypatch.setattr(
-        default_engine,
-        "_call_llm_deep_analysis",
-        lambda product_context, _tools: default_calls.append(product_context),
+    default_engine = FusionDecisionEngine(
+        condition_reviewer=lambda context: default_calls.append(context),
     )
-    monkeypatch.setattr(
-        custom_engine,
-        "_call_llm_deep_analysis",
-        lambda product_context, _tools: custom_calls.append(product_context),
+    custom_engine = FusionDecisionEngine(
+        policy=policy,
+        condition_reviewer=lambda context: custom_calls.append(context),
+    )
+    estimate = MarketPriceEstimate(
+        status="success",
+        condition=MarketplaceCondition.NEW,
+        reference_mode="iqr",
+        median_price=100,
+        low_price=100,
+        high_price=100,
+        sample_count=5,
+        site_count=3,
+        source="online",
+        confidence=0.9,
     )
     arguments = {
         "product_name": "測試商品",
-        "brand_model": "測試型號",
-        "text": "商品狀態明確",
         "selling_price": 90,
-        "market_price": 100,
-        "market_price_source": "online",
+        "market_estimates": (estimate,),
+        "condition": MarketplaceCondition.NEW,
+        "condition_detail": "全新",
+        "condition_source_text": "狀況 全新",
+        "condition_extraction_confidence": 0.8,
     }
 
     default_result = default_engine.evaluate(**arguments)

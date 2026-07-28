@@ -38,6 +38,32 @@ def test_deep_analysis_review_only_accepts_condition_review_fields():
 
 
 @pytest.mark.parametrize(
+    "extra_field",
+    [
+        "review_status",
+        "condition_changed",
+        "product_match",
+        "rejected_candidate_ids",
+        "evidence",
+        "risk_score",
+        "risk_label",
+    ],
+)
+def test_deep_analysis_review_rejects_removed_or_decision_fields(extra_field):
+    payload = {
+        "reviewed_condition": MarketplaceCondition.USED,
+        "condition_detail": "良好",
+        "condition_evidence": "狀況 二手・良好",
+        "reason": "原文已明確標示二手品況",
+        "review_confidence": 0.9,
+        extra_field: [] if extra_field.endswith("ids") else "invalid",
+    }
+
+    with pytest.raises(ValidationError):
+        DeepAnalysisReview(**payload)
+
+
+@pytest.mark.parametrize(
     ("payload", "message"),
     [
         (

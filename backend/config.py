@@ -57,7 +57,6 @@ class Settings(BaseSettings):
     GROQ_RATE_LIMIT_MAX_WAIT_SECONDS: float = 30.0
     PRODUCT_MATCH_FUZZY_MIN_SCORE: int = 86
     ENABLE_INTELLIGENT_LAYER: bool = True
-    BLACKLIST_TERMS_PATH: str = str(ROOT_DIR / "data" / "blacklist_terms.json")
     CASE_LOG_PATH: str = str(ROOT_DIR / "data" / "cases" / "image_analysis_cases.jsonl")
     CASE_MEMORY_ENABLED: bool = True
     OCR_PROVIDER: str = "google_vision"
