@@ -87,8 +87,8 @@ class PriceRiskPolicy(BaseModel):
                 "風險分數邊界必須符合 LOW 小於 MEDIUM 小於 maximum"
             )
 
-        if self.overprice_score_cap > self.medium_score_max:
-            raise ValueError("高於行情的分數上限不得超過 MEDIUM")
+        if self.overprice_score_cap > self.maximum_score:
+            raise ValueError("高於行情的分數上限不得超過最高分")
 
         if self.minimum_iqr_samples < self.minimum_market_samples:
             raise ValueError("IQR 最低樣本數不得少於市場最低樣本數")
@@ -116,31 +116,31 @@ class PriceRiskPolicy(BaseModel):
 
 DEFAULT_PRICE_RISK_POLICY = PriceRiskPolicy(
     underprice_relative_bands=(
-        (0.10, 10),
-        (0.20, 25),
-        (0.35, 45),
-        (0.50, 65),
-        (float("inf"), 85),
+        (0.10, 20),
+        (0.20, 35),
+        (0.35, 55),
+        (0.50, 75),
+        (float("inf"), 95),
     ),
     overprice_relative_bands=(
-        (0.15, 10),
-        (0.30, 20),
-        (0.60, 40),
-        (1.00, 55),
-        (float("inf"), 70),
+        (0.15, 20),
+        (0.30, 35),
+        (0.60, 55),
+        (1.00, 70),
+        (float("inf"), 95),
     ),
     absolute_gap_bands=(
-        (499, 0),
-        (1_999, 5),
-        (4_999, 10),
-        (9_999, 20),
-        (100_000, 30),
+        (499, 5),
+        (1_999, 10),
+        (4_999, 20),
+        (9_999, 30),
+        (100_000, 50),
     ),
     maximum_supported_price=100_000,
     low_score_max=39,
     medium_score_max=79,
     maximum_score=100,
-    overprice_score_cap=79,
+    overprice_score_cap=80,
     minimum_market_confidence=0.60,
     minimum_market_samples=3,
     minimum_market_sites=1,

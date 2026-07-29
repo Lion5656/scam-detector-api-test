@@ -17,20 +17,20 @@ from backend.services.image_price_service.product.product_research_agent import 
 logging = logging.getLogger(__name__)
 
 PRODUCT_NORMALIZATION_SYSTEM_PROMPT = """
-你是商品資訊正規化助手。請針對購物平台 OCR 文字進行一次審查，整理可確認的
-品名、型號、容量，規格作為查詢關鍵字。
+你是商品資訊正規化助手。請根據購物平台 OCR 文字，辨識並整理商品資訊。
 
 規則：
 1. 修正明顯 OCR 錯字，但不可捏造無法確認的型號或規格。
 2. 刊登價格、運費、折扣與分期金額都不是商品規格，不得放入 known_specs。
 3. product_name 使用一般消費者可理解的標準商品名稱。
-4. brand_model 優先保留品牌與確切型號；無法確認時填「未知型號」。
-5. 不要建立搜尋詞，也不要查詢價格。
+4. brand_model 必須使用「品牌 + 型號」；無法確認時填「未知型號」。
+5. known_specs 放入容量、尺寸、解析度、顏色、版本、技術規格等已確認資訊
+6. 不要建立搜尋詞，也不要查詢價格。
 
 只回傳以下 JSON，不要加入 Markdown 或額外說明：
 {
   "product_name": "標準商品名稱",
-  "brand_model": "型號",
+  "brand_model": "品牌 型號",
   "known_specs": ["已確認的規格"]
 }
 """.strip()
@@ -151,8 +151,7 @@ class ProductIdentifier:
         brand_model: str,
         known_specs: list[str],
     ) -> str:
-        """只使用最精簡的商品識別名稱與「價格」建立搜尋詞。"""
-        del known_specs
+        """使用完整品名與少量關鍵規格建立搜尋詞。"""
         unknown_values = {
             "",
             "一般商品",
@@ -160,15 +159,46 @@ class ProductIdentifier:
             "未知型號",
             "未知品牌型號",
         }
-        normalized_model = str(brand_model).strip().replace(" ", "")
-        normalized_name = str(product_name).strip().replace(" ", "")
-        search_name = (
-            normalized_model
-            if normalized_model not in unknown_values
-            else normalized_name
-        )
-        if search_name in unknown_values:
+        normalized_name = " ".join(str(product_name).split())
+        normalized_model = " ".join(str(brand_model).split())
+
+        name_is_known = normalized_name not in unknown_values
+        model_is_known = normalized_model not in unknown_values
+
+        if name_is_known and model_is_known:
+            if normalized_model.casefold() in normalized_name.casefold():
+                search_name = normalized_name
+            else:
+                model_tokens = {
+                    token.casefold()
+                    for token in normalized_model.split()
+                }
+                description_tokens = [
+                    token
+                    for token in normalized_name.split()
+                    if token.casefold() not in model_tokens
+                ]
+                search_name = " ".join(
+                    [normalized_model, *description_tokens]
+                )
+        elif name_is_known:
+            search_name = normalized_name
+        elif model_is_known:
+            search_name = normalized_model
+        else:
             return ""
+
+        additional_specs: list[str] = []
+        normalized_search_name = search_name.casefold()
+        for value in known_specs:
+            spec = " ".join(str(value).split())
+            if not spec or spec.casefold() in normalized_search_name:
+                continue
+            additional_specs.append(spec)
+
+        if additional_specs:
+            search_name = f"{search_name} {' '.join(additional_specs[:2])}"
+
         return f"{search_name} 價格"
 
 

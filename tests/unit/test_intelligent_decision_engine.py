@@ -164,7 +164,7 @@ def test_evaluate_integration_deep_review_confirms_known_condition():
     )
 
     assert result["risk_label"] == "MEDIUM"
-    assert result["risk_score"] == 40.0
+    assert result["risk_score"] == 70.0
     assert result["condition"] is MarketplaceCondition.NEW
     assert result["condition_detail"] == "全新"
     assert result["decision_layer"] == "llm"
@@ -271,9 +271,9 @@ def test_underprice_gap_uses_violated_low_boundary_not_median():
 
     assert components["boundary"] == 10_000
     assert components["relative_gap"] == 0.5
-    assert components["relative_score"] == 65
-    assert components["absolute_bonus"] == 20
-    assert components["score"] == 85.0
+    assert components["relative_score"] == 75
+    assert components["absolute_bonus"] == 30
+    assert components["score"] == 100.0
 
 
 def test_overprice_gap_uses_violated_high_boundary_not_median():
@@ -288,18 +288,18 @@ def test_overprice_gap_uses_violated_high_boundary_not_median():
 
     assert components["boundary"] == 10_000
     assert components["relative_gap"] == 0.5
-    assert components["relative_score"] == 40
-    assert components["absolute_bonus"] == 20
-    assert components["score"] == 60.0
+    assert components["relative_score"] == 55
+    assert components["absolute_bonus"] == 30
+    assert components["score"] == 80.0
 
 
 @pytest.mark.parametrize(
     ("relative_gap", "expected_score"),
     [
-        (0.10, 10),
-        (0.20, 25),
-        (0.35, 45),
-        (0.50, 65),
+        (0.10, 20),
+        (0.20, 35),
+        (0.35, 55),
+        (0.50, 75),
     ],
 )
 def test_underprice_relative_score_inclusive_boundaries(
@@ -324,10 +324,10 @@ def test_underprice_relative_score_inclusive_boundaries(
 @pytest.mark.parametrize(
     ("boundary", "relative_gap", "expected_score"),
     [
-        (50_000, 0.15, 10),
-        (50_000, 0.30, 20),
-        (50_000, 0.60, 40),
-        (40_000, 1.00, 55),
+        (50_000, 0.15, 20),
+        (50_000, 0.30, 35),
+        (50_000, 0.60, 55),
+        (40_000, 1.00, 70),
     ],
 )
 def test_overprice_relative_score_inclusive_boundaries(
@@ -352,10 +352,10 @@ def test_overprice_relative_score_inclusive_boundaries(
 @pytest.mark.parametrize(
     ("absolute_gap", "expected_bonus"),
     [
-        (500, 5),
-        (2_000, 10),
-        (5_000, 20),
-        (10_000, 30),
+        (500, 10),
+        (2_000, 20),
+        (5_000, 30),
+        (10_000, 50),
     ],
 )
 def test_absolute_gap_inclusive_lower_boundaries(
@@ -418,15 +418,15 @@ def test_100000_boundary_and_90000_listing_scores_exactly_medium():
         market_estimates=(estimate,),
     )
 
-    assert components["relative_score"] == 10
-    assert components["absolute_bonus"] == 30
-    assert components["score"] == 40.0
-    assert result["risk_score"] == 40.0
+    assert components["relative_score"] == 20
+    assert components["absolute_bonus"] == 50
+    assert components["score"] == 70.0
+    assert result["risk_score"] == 70.0
     assert result["risk_label"] == "MEDIUM"
     assert result["decision_layer"] == "fast"
 
 
-def test_overprice_pure_price_result_is_capped_at_medium():
+def test_overprice_pure_price_result_can_reach_high():
     engine = FusionDecisionEngine()
     estimate = _new_estimate(
         low=9_000,
@@ -441,7 +441,7 @@ def test_overprice_pure_price_result_is_capped_at_medium():
     )
 
     assert result["risk_score"] == engine.policy.overprice_score_cap
-    assert result["risk_label"] == "MEDIUM"
+    assert result["risk_label"] == "HIGH"
 
 
 def test_small_sample_price_score_uses_policy_cap():
@@ -668,7 +668,7 @@ def test_missing_condition_source_never_calls_llm_and_keeps_dual_result():
         condition_extraction_confidence=0.0,
     )
 
-    assert result["risk_label"] == "MEDIUM"
+    assert result["risk_label"] == "HIGH"
     assert result["decision_layer"] == "fast"
     assert calls == []
 
@@ -753,7 +753,7 @@ def test_untraceable_or_low_confidence_llm_review_uses_fallback(
         condition_extraction_confidence=0.8,
     )
 
-    assert result["risk_score"] == 40.0
+    assert result["risk_score"] == 70.0
     assert result["risk_label"] == "MEDIUM"
     assert result["decision_layer"] == "llm_simulated"
 
@@ -809,7 +809,7 @@ def test_llm_same_condition_and_detail_does_not_reprice():
     )
 
     assert result["decision_layer"] == "llm"
-    assert result["risk_score"] == 40.0
+    assert result["risk_score"] == 70.0
 
 
 def test_unknown_reviewed_as_unknown_keeps_original_dual_result_without_reprice():
@@ -833,7 +833,7 @@ def test_unknown_reviewed_as_unknown_keeps_original_dual_result_without_reprice(
         reprice=lambda *_: pytest.fail("UNKNOWN 未變更不得重新查價"),
     )
 
-    assert result["risk_label"] == "MEDIUM"
+    assert result["risk_label"] == "HIGH"
     assert result["decision_layer"] == "llm"
 
 
@@ -919,7 +919,7 @@ def test_llm_extra_risk_fields_are_invalid_and_cannot_control_final_score():
         condition_extraction_confidence=0.8,
     )
 
-    assert result["risk_score"] == 40.0
+    assert result["risk_score"] == 70.0
     assert result["risk_label"] == "MEDIUM"
     assert result["decision_layer"] == "llm_simulated"
 

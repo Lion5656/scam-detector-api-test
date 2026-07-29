@@ -138,7 +138,7 @@ def test_product_identifier_normalizes_product_and_builds_search_query(
     assert result.product_name == "Apple iPhone 15"
     assert result.brand_model == "Apple iPhone 15"
     assert result.known_specs == ["256GB", "藍色"]
-    assert result.search_query == "Apple iPhone 15 價格"
+    assert result.search_query == "Apple iPhone 15 256GB 藍色 價格"
     assert result.market_price == 0
     assert len(research_agent.calls) == 1
     ai_input = json.loads(research_agent.calls[0]["user_prompt"])
@@ -156,6 +156,6 @@ def test_product_identifier_builds_query_for_local_market_match() -> None:
 
     result = identifier.identify("WH-1000XM5")
 
-    assert result.search_query == "Sony WH-1000XM5 價格"
+    assert result.search_query == "Sony WH-1000XM5 無線降噪耳機 價格"
     assert result.market_price == 9990
     assert research_agent.calls == []

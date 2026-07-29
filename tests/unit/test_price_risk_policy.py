@@ -35,25 +35,25 @@ def test_default_price_risk_policy_matches_documented_thresholds():
     policy = DEFAULT_PRICE_RISK_POLICY
 
     assert policy.underprice_relative_bands == (
-        (0.10, 10),
-        (0.20, 25),
-        (0.35, 45),
-        (0.50, 65),
-        (float("inf"), 85),
+        (0.10, 20),
+        (0.20, 35),
+        (0.35, 55),
+        (0.50, 75),
+        (float("inf"), 95),
     )
     assert policy.overprice_relative_bands == (
-        (0.15, 10),
-        (0.30, 20),
-        (0.60, 40),
-        (1.00, 55),
-        (float("inf"), 70),
+        (0.15, 20),
+        (0.30, 35),
+        (0.60, 55),
+        (1.00, 70),
+        (float("inf"), 95),
     )
     assert policy.absolute_gap_bands == (
-        (499, 0),
-        (1_999, 5),
-        (4_999, 10),
-        (9_999, 20),
-        (100_000, 30),
+        (499, 5),
+        (1_999, 10),
+        (4_999, 20),
+        (9_999, 30),
+        (100_000, 50),
     )
     assert policy.model_dump(
         exclude={
@@ -66,10 +66,10 @@ def test_default_price_risk_policy_matches_documented_thresholds():
         "low_score_max": 39,
         "medium_score_max": 79,
         "maximum_score": 100,
-        "overprice_score_cap": 79,
+        "overprice_score_cap": 80,
         "minimum_market_confidence": 0.60,
         "minimum_market_samples": 3,
-        "minimum_market_sites": 3,
+        "minimum_market_sites": 1,
         "minimum_iqr_samples": 5,
         "small_sample_relative_tolerance": 0.25,
         "small_sample_score_cap": 79,
@@ -243,7 +243,7 @@ def test_custom_policy_changes_price_boundary_label_and_deep_analysis(
     assert default_result["risk_label"] == "LOW"
     assert default_result["decision_layer"] == "fast"
     assert default_calls == []
-    assert custom_result["risk_label"] == "MEDIUM"
+    assert custom_result["risk_label"] == "HIGH"
     assert custom_result["decision_layer"] == "llm_simulated"
     assert len(custom_calls) == 1
 
