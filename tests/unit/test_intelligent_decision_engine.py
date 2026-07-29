@@ -87,6 +87,140 @@ def _evaluate(engine: FusionDecisionEngine, **overrides):
     return engine.evaluate(**values)
 
 
+def test_evaluate_integration_known_condition_without_deep_review():
+    reviewer_calls: list[dict[str, object]] = []
+    engine = FusionDecisionEngine(
+        condition_reviewer=lambda context: reviewer_calls.append(context)
+    )
+
+    result = _evaluate(
+        engine,
+        condition=MarketplaceCondition.NEW,
+        condition_extraction_confidence=0.97,
+        market_estimates=(_new_estimate(),),
+    )
+
+    assert result["risk_label"] == "LOW"
+    assert result["risk_score"] == 0.0
+    assert result["condition"] is MarketplaceCondition.NEW
+    assert result["decision_layer"] == "fast"
+    assert reviewer_calls == []
+
+
+def test_evaluate_integration_unknown_condition_without_reviewable_evidence():
+    reviewer_calls: list[dict[str, object]] = []
+    engine = FusionDecisionEngine(
+        condition_reviewer=lambda context: reviewer_calls.append(context)
+    )
+
+    result = _evaluate(
+        engine,
+        selling_price=18_000,
+        condition=MarketplaceCondition.UNKNOWN,
+        condition_detail="",
+        condition_source_text="",
+        condition_extraction_confidence=0.0,
+        text="",
+        market_estimates=(_new_estimate(), _used_estimate()),
+    )
+
+    assert result["risk_label"] == "LOW"
+    assert result["condition"] is MarketplaceCondition.UNKNOWN
+    assert result["decision_layer"] == "fast"
+    assert reviewer_calls == []
+    assert "全新：" in result["reason"]
+    assert "二手：" in result["reason"]
+
+
+def test_evaluate_integration_deep_review_confirms_known_condition():
+    review = DeepAnalysisReview(
+        reviewed_condition=MarketplaceCondition.NEW,
+        condition_detail="全新",
+        condition_evidence="狀況 全新",
+        reason="原文已明確標示為全新",
+        review_confidence=0.9,
+    )
+    reviewer_calls: list[dict[str, object]] = []
+    engine = FusionDecisionEngine(
+        condition_reviewer=lambda context: (
+            reviewer_calls.append(context) or review
+        )
+    )
+    estimate = _new_estimate(
+        low=100_000,
+        median=100_000,
+        high=100_000,
+    )
+
+    result = _evaluate(
+        engine,
+        selling_price=90_000,
+        condition=MarketplaceCondition.NEW,
+        condition_detail="全新",
+        condition_source_text="狀況 全新",
+        condition_extraction_confidence=0.8,
+        market_estimates=(estimate,),
+        reprice=lambda *_: pytest.fail("品況未修正時不應重新查價"),
+    )
+
+    assert result["risk_label"] == "MEDIUM"
+    assert result["risk_score"] == 40.0
+    assert result["condition"] is MarketplaceCondition.NEW
+    assert result["condition_detail"] == "全新"
+    assert result["decision_layer"] == "llm"
+    assert len(reviewer_calls) == 1
+    assert "狀況 全新" in result["evidence"]
+
+
+def test_evaluate_integration_deep_review_corrects_unknown_condition():
+    review = DeepAnalysisReview(
+        reviewed_condition=MarketplaceCondition.USED,
+        condition_detail="良好",
+        condition_evidence="二手・良好",
+        reason="原文明確標示為二手良好",
+        review_confidence=0.9,
+    )
+    reviewer_calls: list[dict[str, object]] = []
+    reprice_calls: list[tuple[MarketplaceCondition, str]] = []
+    engine = FusionDecisionEngine(
+        condition_reviewer=lambda context: (
+            reviewer_calls.append(context) or review
+        )
+    )
+
+    def reprice(
+        condition: MarketplaceCondition,
+        condition_detail: str,
+    ) -> tuple[MarketPriceEstimate, ...]:
+        reprice_calls.append((condition, condition_detail))
+        return (
+            _used_estimate(
+                low=9_000,
+                median=10_500,
+                high=12_000,
+            ),
+        )
+
+    result = _evaluate(
+        engine,
+        selling_price=10_000,
+        condition=MarketplaceCondition.UNKNOWN,
+        condition_detail="",
+        condition_source_text="商品狀況：二手・良好",
+        condition_extraction_confidence=0.0,
+        market_estimates=(_new_estimate(), _used_estimate()),
+        reprice=reprice,
+    )
+
+    assert result["risk_label"] == "LOW"
+    assert result["risk_score"] == 0.0
+    assert result["condition"] is MarketplaceCondition.USED
+    assert result["condition_detail"] == "良好"
+    assert result["decision_layer"] == "llm"
+    assert len(reviewer_calls) == 1
+    assert reprice_calls == [(MarketplaceCondition.USED, "良好")]
+
+
 def test_market_interval_returns_fast_low():
     result = _evaluate(FusionDecisionEngine())
 
@@ -94,6 +228,35 @@ def test_market_interval_returns_fast_low():
     assert result["risk_score"] == 0.0
     assert result["decision_layer"] == "fast"
     assert result["market_price_source"] == "online"
+
+
+def test_success_result_explains_interval_gaps_and_condition():
+    result = _evaluate(FusionDecisionEngine())
+
+    assert "25000～30000 市場區間" in result["reason"]
+    assert "相對差距 0.00%" in result["reason"]
+    assert "絕對差額 0" in result["reason"]
+    assert any("new 市場區間" in item for item in result["evidence"])
+
+
+def test_unknown_dual_result_explains_both_condition_paths():
+    result = _evaluate(
+        FusionDecisionEngine(),
+        selling_price=18_000,
+        condition=MarketplaceCondition.UNKNOWN,
+        condition_detail="",
+        condition_source_text="",
+        condition_extraction_confidence=0.0,
+        market_estimates=(_new_estimate(), _used_estimate()),
+    )
+
+    assert result["risk_label"] == "LOW"
+    assert "全新：" in result["reason"]
+    assert "二手：" in result["reason"]
+    assert "相對差距" in result["reason"]
+    assert "絕對差額" in result["reason"]
+    assert any("new 市場區間" in item for item in result["evidence"])
+    assert any("used 市場區間" in item for item in result["evidence"])
 
 
 def test_underprice_gap_uses_violated_low_boundary_not_median():
@@ -448,11 +611,45 @@ def test_medium_or_high_with_reviewable_condition_evidence_calls_llm(
     assert len(calls) == 1
     assert set(calls[0]) == {
         "product_name",
+        "text",
         "condition",
         "condition_detail",
         "condition_source_text",
         "condition_extraction_confidence",
     }
+
+
+def test_condition_review_can_use_listing_text_and_detail_together():
+    review = DeepAnalysisReview(
+        reviewed_condition=MarketplaceCondition.USED,
+        condition_detail="近全新",
+        condition_evidence="二手・近全新",
+        reason="完整文字已標示二手品況",
+        review_confidence=0.9,
+    )
+    contexts: list[dict[str, object]] = []
+    engine = FusionDecisionEngine(
+        condition_reviewer=lambda context: (
+            contexts.append(context) or review
+        )
+    )
+
+    result = _evaluate(
+        engine,
+        selling_price=10_000,
+        condition=MarketplaceCondition.UNKNOWN,
+        condition_detail="近全新",
+        condition_source_text="",
+        condition_extraction_confidence=0.0,
+        text="商品說明：二手・近全新，功能正常",
+        market_estimates=(_new_estimate(), _used_estimate()),
+        reprice=lambda *_: (_used_estimate(),),
+    )
+
+    assert result["condition"] is MarketplaceCondition.USED
+    assert result["condition_detail"] == "近全新"
+    assert contexts[0]["text"] == "商品說明：二手・近全新，功能正常"
+    assert contexts[0]["condition_detail"] == "近全新"
 
 
 def test_missing_condition_source_never_calls_llm_and_keeps_dual_result():

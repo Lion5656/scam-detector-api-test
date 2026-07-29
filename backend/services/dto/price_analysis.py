@@ -13,7 +13,7 @@ from backend.services.image_price_service.domain.policy import (
 RiskLabel = Literal["LOW", "MEDIUM", "HIGH", "UNKNOWN"]
 DecisionLayer = Literal["fast", "llm", "llm_simulated", "decision_error"]
 MarketPriceSource = Literal["online", "fallback_local", "not_evaluated"]
-SearchTool = Literal["serp_api", "tavily", "ddgs", "unused"]
+SearchTool = Literal["serp_api", "tavily", "ddgs"]
 MarketPriceStatus = Literal["success", "insufficient", "not_found"]
 MarketPriceReferenceMode = Literal["iqr", "median_low_sample"]
 
@@ -46,6 +46,7 @@ class MarketPriceEstimate(BaseModel):
     site_count: int = Field(ge=0)
     source: MarketPriceSource
     confidence: float = Field(ge=0.0, le=1.0)
+    search_tools: list[SearchTool] = Field(default_factory=list)
     candidates: tuple[MarketPriceCandidateEvidence, ...] = ()
 
 
@@ -94,13 +95,14 @@ class ImagePriceAnalysisResult(BaseModel):
     listed_price: int | None = Field(default=None, ge=0)
     market_price: int = Field(default=0, ge=0)
     market_price_source: MarketPriceSource = "not_evaluated"
+    market_price_estimates: tuple[MarketPriceEstimate, ...] = ()
     risk_label: RiskLabel = "UNKNOWN"
     score: str | float | None = None
     reason: str | None = None
     evidence: list[str] = Field(default_factory=list)
     confidence: float | None = Field(default=None, ge=0, le=1)
     decision_layer: DecisionLayer = "fast"
-    search_tool: SearchTool = "unused"
+    search_tools: list[SearchTool] = Field(default_factory=list)
     marketplace_layout: MarketplaceLayout = MarketplaceLayout.UNKNOWN
     marketplace_confidence: float = Field(default=0.0, ge=0, le=1)
     extraction_confidence: float | None = Field(default=None, ge=0, le=1)

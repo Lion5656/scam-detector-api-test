@@ -1,9 +1,8 @@
-"""以真實 Tavily 與 Groq API 驗證價格搜尋 workflow。"""
+"""以真實 Tavily API 驗證確定性價格擷取流程。"""
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -12,11 +11,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.config import settings
-from backend.services.image_price_service.pricing.online_marketprice_service import (
-    PRICE_EXTRACTION_SYSTEM_PROMPT,
+from backend.services.image_price_service.domain.models import MarketplaceCondition
+from backend.services.image_price_service.pricing.search_result_price_extractor import (
+    extract_prices_from_search_results,
 )
-from backend.services.image_price_service.product.product_research_agent import (
-    create_product_research_agent,
+from backend.services.image_price_service.pricing.search_tools import (
+    search_tavily,
 )
 
 
@@ -30,7 +30,7 @@ def configure_console_encoding() -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="實際執行 Tavily 搜尋，再由 Groq 整理價格 JSON。",
+        description="實際執行 Tavily 搜尋，再以程式規則擷取價格。",
     )
     parser.add_argument(
         "--query",
@@ -53,65 +53,37 @@ def main() -> int:
         print("失敗：--max-results 必須大於 0。", file=sys.stderr)
         return 2
 
-    missing_keys: list[str] = []
     if not settings.TAVILY_SEARCH_API_KEY.get_secret_value().strip():
-        missing_keys.append("TAVILY_SEARCH_API_KEY")
-    if not settings.GROQ_API_KEY.get_secret_value().strip():
-        missing_keys.append("GROQ_API_KEY")
-    if missing_keys:
         print(
-            f"失敗：尚未設定 {', '.join(missing_keys)}。",
+            "失敗：尚未設定 TAVILY_SEARCH_API_KEY。",
             file=sys.stderr,
         )
         return 2
 
     print("步驟 1/2：呼叫 Tavily 搜尋工具。")
-    print("步驟 2/2：將 Tavily 結果交給 Groq 產生價格 JSON。")
+    print("步驟 2/2：以程式規則擷取價格。")
     try:
-        result = create_product_research_agent().online_price_search(
-            system_prompt=(
-                f"{PRICE_EXTRACTION_SYSTEM_PROMPT}\n\n"
-                "本次目標品況為「全新」。只擷取全新商品價格；"
-                '回傳項目的 condition 必須填 "new"。'
-            ),
-            user_prompt=json.dumps(
-                {
-                    "product_query": args.query,
-                    "max_results": args.max_results,
-                    "instruction": (
-                        "只接受與 product_query 及全新品況相符，"
-                        "且摘要中有明確價格的結果。"
-                    ),
-                    "target_condition": "new",
-                },
-                ensure_ascii=False,
-            ),
-            allowed_tool_names=["search_market_prices_tavily"],
+        results = search_tavily(args.query, args.max_results)
+        candidates = extract_prices_from_search_results(
+            results,
+            MarketplaceCondition.NEW,
+            product_query=args.query,
         )
     except Exception as error:
         print(f"失敗：workflow 發生錯誤：{error}", file=sys.stderr)
         return 1
 
-    if result.tool_errors:
-        print(
-            f"失敗：Tavily 工具錯誤：{'; '.join(result.tool_errors)}",
-            file=sys.stderr,
-        )
-        return 1
-
-    prices = result.output.get("prices", [])
     print(
-        "成功：Tavily 與 Groq workflow 均已完成。"
-        f"Tavily 結果 {len(result.tool_results)} 筆，"
-        f"Groq 價格證據 {len(prices) if isinstance(prices, list) else 0} 筆。"
+        "成功：Tavily 與價格擷取流程均已完成。"
+        f"Tavily 結果 {len(results)} 筆，"
+        f"價格證據 {len(candidates)} 筆。"
     )
-    if isinstance(prices, list):
-        for index, price in enumerate(prices, start=1):
-            print(
-                f"{index}. price={price.get('price')} "
-                f"condition={price.get('condition')} "
-                f"url={price.get('url')}"
-            )
+    for index, candidate in enumerate(candidates, start=1):
+        print(
+            f"{index}. price={candidate.price} "
+            f"condition={candidate.condition.value} "
+            f"url={candidate.url}"
+        )
     return 0
 
 

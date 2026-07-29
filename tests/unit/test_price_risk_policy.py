@@ -255,10 +255,54 @@ def test_custom_policy_changes_supported_market_price_boundary():
             maximum_supported_price=500,
         )
     )
-    service = OnlineMarketPriceService(policy=policy)
+    from backend.services.image_price_service.pricing.search_result_price_extractor import (
+        GroqSearchResultPriceExtractor,
+        SearchPriceExtraction,
+        ExtractedSearchPrice,
+        extract_prices_from_search_results,
+    )
+    from backend.services.image_price_service.domain.models import MarketplaceCondition
 
-    assert service._parse_price(500) == 500
-    assert service._parse_price(501) is None
+    class FakeStructuredLLM:
+        def __init__(self, price):
+            self.price = price
+
+        def invoke(self, prompt):
+            return SearchPriceExtraction(
+                candidates=[
+                    ExtractedSearchPrice(
+                        result_index=0,
+                        price=self.price,
+                        condition=MarketplaceCondition.NEW,
+                        evidence=f"售價 NT${self.price}",
+                    )
+                ]
+            )
+
+    def extractor_for(price):
+        return GroqSearchResultPriceExtractor(
+            api_key="",
+            model_name="test",
+            structured_llm=FakeStructuredLLM(price),
+        )
+
+    within_range = extract_prices_from_search_results(
+        [{"title": "商品 全新", "link": "https://a.example/1", "snippet": "售價 NT$500"}],
+        MarketplaceCondition.NEW,
+        product_query="商品",
+        policy=policy,
+        extractor=extractor_for(500),
+    )
+    out_of_range = extract_prices_from_search_results(
+        [{"title": "商品 全新", "link": "https://b.example/1", "snippet": "售價 NT$501"}],
+        MarketplaceCondition.NEW,
+        product_query="商品",
+        policy=policy,
+        extractor=extractor_for(501),
+    )
+    assert len(within_range) == 1
+    assert within_range[0].price == 500
+    assert len(out_of_range) == 0
 
 
 def test_decision_engine_has_no_legacy_magic_price_thresholds():

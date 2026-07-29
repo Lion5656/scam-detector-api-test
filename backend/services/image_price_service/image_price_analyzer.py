@@ -1,13 +1,13 @@
 """協調商品圖片的來源驗證、價格抽取與風險分析流程。"""
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from backend.config import settings
 from backend.repository.case_repository import case_repository
 from backend.services.dto.price_analysis import (
     ImagePriceAnalysisResult,
-    MarketPriceSource,
+    MarketPriceEstimate,
     SearchTool,
 )
 from backend.services.image_price_service.case_recorder import record_case
@@ -19,9 +19,6 @@ from backend.services.image_price_service.domain.models import (
 )
 from backend.services.image_price_service.domain.policy import (
     DEFAULT_PRICE_RISK_POLICY,
-)
-from backend.services.image_price_service.ocr.ocr_service import (
-    extract_ocr_document,
 )
 from backend.services.image_price_service.ocr.ocr_service import (
     ocr_service as default_ocr_service,
@@ -41,6 +38,9 @@ from backend.services.image_price_service.pricing.online_marketprice_service imp
 from backend.services.image_price_service.product.product_identifier import (
     product_identifier as default_product_identifier,
 )
+from backend.services.image_price_service.risk.condition_reviewer import (
+    GroqConditionReviewer,
+)
 from backend.services.image_price_service.risk.fusion_decision_engine import (
     FusionDecisionEngine,
 )
@@ -52,6 +52,10 @@ default_online_price_service = OnlineMarketPriceService(
 )
 default_decision_engine = FusionDecisionEngine(
     policy=DEFAULT_PRICE_RISK_POLICY,
+    condition_reviewer=GroqConditionReviewer(
+        api_key=settings.GROQ_API_KEY.get_secret_value(),
+        model_name=settings.PRODUCT_MODEL_NAME,
+    ),
 )
 
 
@@ -132,7 +136,7 @@ class ImagePriceAnalyzer:
             confidence=0.0,
             evidence=evidence,
             decision_layer="decision_error",
-            search_tool="unused",
+            search_tools=[],
             marketplace_layout=layout,
             marketplace_confidence=marketplace_confidence,
             extraction_confidence=extraction.confidence if extraction else None,
@@ -156,6 +160,37 @@ class ImagePriceAnalyzer:
             extraction_warnings=extraction.warnings if extraction else [],
         )
 
+    @staticmethod
+    def _without_market_candidates(
+        estimates: tuple[MarketPriceEstimate, ...],
+    ) -> tuple[MarketPriceEstimate, ...]:
+        """將候選明細留在查價服務邊界內。"""
+        return tuple(
+            estimate.model_copy(update={"candidates": ()})
+            for estimate in estimates
+        )
+
+    @staticmethod
+    def _search_tools(
+        estimates: tuple[MarketPriceEstimate, ...],
+    ) -> list[SearchTool]:
+        """依實際呼叫順序彙整查價使用過的搜尋工具。"""
+        search_tools: list[SearchTool] = []
+        for estimate in estimates:
+            for search_tool in estimate.search_tools:
+                if search_tool not in search_tools:
+                    search_tools.append(search_tool)
+        return search_tools
+
+    @staticmethod
+    def _reference_market_price(
+        estimates: tuple[MarketPriceEstimate, ...],
+    ) -> int:
+        """取得單一成功市場區間的中位數，供介面顯示參考。"""
+        if len(estimates) != 1 or estimates[0].status != "success":
+            return 0
+        return estimates[0].median_price
+
     def image_price_detector(
         self,
         data: bytes,
@@ -163,7 +198,7 @@ class ImagePriceAnalyzer:
         content_type: str = "",
     ) -> ImagePriceAnalysisResult:
         """分析 Marketplace 截圖並回傳價格風險結果。"""
-        document = extract_ocr_document(self._ocr_service, data)
+        document = self._ocr_service.extract_document(data)
         text = document.text
         detection = self._marketplace_detector.detect(document)
         if not detection.is_marketplace:
@@ -250,63 +285,84 @@ class ImagePriceAnalyzer:
 
         product_name = extraction.product_name
         product = self._product_identifier.identify(product_name)
-        market_estimates = resolve_market_price(
+        resolved_market_estimates = resolve_market_price(
             self._online_price_service,
             product_name,
             product.brand_model,
             product.market_price,
             product.search_query,
             condition=extraction.condition,
-            condition_text=product_name,
+            condition_text=extraction.condition_detail,
         )
-        market_estimate = (
-            market_estimates[0]
-            if len(market_estimates) == 1
-            else None
+        search_tools = self._search_tools(resolved_market_estimates)
+        active_market_estimates = self._without_market_candidates(
+            resolved_market_estimates
         )
-        market_price = (
-            market_estimate.median_price
-            if market_estimate is not None
-            and market_estimate.status == "success"
-            else 0
-        )
-        market_price_source: MarketPriceSource = (
-            market_estimate.source
-            if market_estimate is not None
-            else "not_evaluated"
-        )
-        search_tool: SearchTool = "unused"
-        selling_price = extraction.price
+        reprice_performed = False
 
-        insufficient_search_results = (
-            settings.ONLINE_PRICE_ENABLED
-            and (
-                market_estimate is None
-                or market_estimate.status != "success"
+        def reprice_once(
+            condition: MarketplaceCondition,
+            condition_detail: str,
+        ) -> tuple[MarketPriceEstimate, ...]:
+            nonlocal active_market_estimates, reprice_performed, search_tools
+            if reprice_performed:
+                return active_market_estimates
+            reprice_performed = True
+            repriced_estimates = resolve_market_price(
+                self._online_price_service,
+                product_name,
+                product.brand_model,
+                product.market_price,
+                product.search_query,
+                condition=condition,
+                condition_text=condition_detail,
             )
+            for search_tool in self._search_tools(repriced_estimates):
+                if search_tool not in search_tools:
+                    search_tools.append(search_tool)
+            active_market_estimates = self._without_market_candidates(
+                repriced_estimates
+            )
+            return active_market_estimates
+
+        selling_price = cast(int, extraction.price)
+        decision = self._decision_engine.evaluate(
+            product_name=product_name,
+            selling_price=selling_price,
+            market_estimates=active_market_estimates,
+            condition=extraction.condition,
+            condition_detail=extraction.condition_detail,
+            condition_source_text=extraction.condition_source_text,
+            condition_extraction_confidence=(
+                extraction.condition_extraction_confidence
+            ),
+            text=text,
+            reprice=reprice_once,
         )
-        decision_error_code: str | None = None
-        if insufficient_search_results:
-            decision_error_code = "MARKET_PRICE_NOT_FOUND"
-            decision = {
-                "risk_label": "UNKNOWN",
-                "risk_score": "未知",
-                "reason": "未知商品，搜索結果過少",
-                "evidence": ["線上查價結果不足"],
-                "confidence": 0.0,
-                "decision_layer": "decision_error",
-            }
-            resolved_condition = MarketplaceCondition.UNKNOWN
+        decision_error_code = decision.get("error_code")
+        if not isinstance(decision_error_code, str):
+            decision_error_code = None
+
+        decision_condition = decision.get("condition", extraction.condition)
+        if isinstance(decision_condition, MarketplaceCondition):
+            resolved_condition = decision_condition
+        elif isinstance(decision_condition, str):
+            try:
+                resolved_condition = MarketplaceCondition(decision_condition)
+            except ValueError:
+                resolved_condition = extraction.condition
         else:
-            decision = self._decision_engine.evaluate(
-                product_name=product_name,
-                brand_model=product.brand_model,
-                text=text,
-                selling_price=selling_price,
-                market_price=market_price,
-                market_price_source=market_price_source,
-            )
             resolved_condition = extraction.condition
+        resolved_condition_detail = str(
+            decision.get(
+                "condition_detail",
+                extraction.condition_detail,
+            )
+            or ""
+        )
+        market_price = self._reference_market_price(
+            active_market_estimates,
+        )
         decision_evidence = decision.get("evidence")
         evidence = (
             [str(item) for item in decision_evidence]
@@ -324,14 +380,18 @@ class ImagePriceAnalyzer:
             brand_model=product.brand_model,
             listed_price=selling_price,
             market_price=market_price,
-            market_price_source=market_price_source,
+            market_price_source=decision.get(
+                "market_price_source",
+                "not_evaluated",
+            ),
+            market_price_estimates=active_market_estimates,
             risk_label=decision.get("risk_label", "UNKNOWN"),
             score=decision.get("risk_score"),
             reason=str(decision.get("reason") or ""),
             evidence=evidence,
             confidence=float(decision.get("confidence") or 0.0),
             decision_layer=decision.get("decision_layer", "fast"),
-            search_tool=search_tool,
+            search_tools=search_tools,
             marketplace_layout=detection.layout,
             marketplace_confidence=detection.confidence,
             extraction_confidence=extraction.confidence,
@@ -339,7 +399,7 @@ class ImagePriceAnalyzer:
             price_extraction_reason=extraction.reason,
             seller_name=extraction.seller_name,
             condition=resolved_condition,
-            condition_detail=extraction.condition_detail,
+            condition_detail=resolved_condition_detail,
             condition_source_text=extraction.condition_source_text,
             condition_extraction_confidence=(
                 extraction.condition_extraction_confidence

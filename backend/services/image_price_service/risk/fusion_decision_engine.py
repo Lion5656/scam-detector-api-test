@@ -200,12 +200,17 @@ class FusionDecisionEngine:
         base_score: float,
         condition: MarketplaceCondition,
         condition_extraction_confidence: float,
+        text: str,
+        condition_detail: str,
         condition_source_text: str,
         condition_has_conflict: bool,
     ) -> bool:
         """只在價格有風險且有需要複核的有限狀態證據時呼叫 LLM。"""
         has_price_risk = base_score > self.policy.low_score_max
-        has_reviewable_evidence = bool(condition_source_text.strip())
+        has_reviewable_evidence = any(
+            value.strip()
+            for value in (text, condition_detail, condition_source_text)
+        )
         condition_needs_review = (
             condition == MarketplaceCondition.UNKNOWN
             or condition_extraction_confidence
@@ -297,9 +302,13 @@ class FusionDecisionEngine:
         if direction == "within":
             reason = (
                 f"刊登價格 {selling_price} 位於"
-                f" {estimate.low_price}～{estimate.high_price} 市場區間"
+                f" {estimate.low_price}～{estimate.high_price} 市場區間，"
+                "相對差距 0.00%、絕對差額 0"
             )
-            price_evidence = "刊登價格位於有效市場區間"
+            price_evidence = (
+                "刊登價格位於有效市場區間：相對分數 0、"
+                "絕對差額加分 0"
+            )
         else:
             direction_text = "低於" if direction == "under" else "高於"
             reason = (
@@ -423,7 +432,9 @@ class FusionDecisionEngine:
             "risk_score": merged_score,
             "reason": (
                 "商品狀態未知，已分別比較全新與二手市場區間，"
-                f"依保守規則採用 {merged_label}"
+                f"依保守規則採用 {merged_label}；"
+                f"全新：{new_result['reason']}；"
+                f"二手：{used_result['reason']}"
             ),
             "evidence": [
                 *[
@@ -494,15 +505,21 @@ class FusionDecisionEngine:
     def _review_is_acceptable(
         self,
         review: DeepAnalysisReview,
+        text: str,
+        condition_detail: str,
         condition_source_text: str,
     ) -> bool:
         evidence = self._normalize_review_text(review.condition_evidence)
-        source = self._normalize_review_text(condition_source_text)
+        sources = tuple(
+            self._normalize_review_text(value)
+            for value in (text, condition_detail, condition_source_text)
+            if value.strip()
+        )
         return (
             review.review_confidence
             >= self.policy.llm_review_min_confidence
             and bool(evidence)
-            and evidence in source
+            and any(evidence in source for source in sources)
         )
 
     def _apply_review(
@@ -646,7 +663,7 @@ class FusionDecisionEngine:
         market_price_source: MarketPriceSource = "not_evaluated",
     ) -> dict[str, Any]:
         """執行結構化價格規則，並在符合條件時選用 LLM 複核狀態。"""
-        del brand_model, text, market_price, market_price_source
+        del brand_model, market_price, market_price_source
 
         if not product_name.strip():
             return self._decision_error(
@@ -680,6 +697,8 @@ class FusionDecisionEngine:
             base_score,
             condition,
             condition_extraction_confidence,
+            text,
+            condition_detail,
             condition_source_text,
             condition_has_conflict,
         ):
@@ -697,6 +716,7 @@ class FusionDecisionEngine:
 
         product_context: dict[str, object] = {
             "product_name": " ".join(product_name.split()),
+            "text": " ".join(text.split()),
             "condition": condition.value,
             "condition_detail": condition_detail,
             "condition_source_text": condition_source_text,
@@ -718,6 +738,8 @@ class FusionDecisionEngine:
             review is None
             or not self._review_is_acceptable(
                 review,
+                text,
+                condition_detail,
                 condition_source_text,
             )
         ):

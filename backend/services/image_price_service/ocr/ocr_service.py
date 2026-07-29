@@ -57,10 +57,6 @@ class OCRService:
         ys = [float(v.y or 0) for v in vertices]
         return min(xs), min(ys), max(xs), max(ys)
 
-    def extract_text(self, data: bytes) -> str:
-        """從圖片取得 OCR 全文。"""
-        return self.extract_document(data).text
-
     def extract_document(self, data: bytes) -> OCRDocument:
         """從圖片建立含版面資訊的 OCR 文件。"""
         provider = settings.OCR_PROVIDER.strip().lower()
@@ -68,10 +64,6 @@ class OCRService:
             raise RuntimeError("OCR_PROVIDER 僅支援 google_vision")
 
         return self._extract_document_with_google_vision(data)
-
-    def _extract_text_with_google_vision(self, data: bytes) -> str:
-        """透過 Google Vision 取得 OCR 全文。"""
-        return self._extract_document_with_google_vision(data).text
 
     def _extract_document_with_google_vision(self, data: bytes) -> OCRDocument:
         """呼叫 Google Vision 並整理 OCR 文件。"""
@@ -149,14 +141,4 @@ class OCRService:
                 preserve_lines=True,
             )
         )
-
-
-def extract_ocr_document(service: Any, data: bytes) -> OCRDocument:
-    """取得 OCR 文件並相容僅支援全文的服務。"""
-    extract_document = getattr(service, "extract_document", None)
-    if callable(extract_document):
-        return cast(OCRDocument, extract_document(data))
-    return OCRDocument(text=service.extract_text(data))
-
-
 ocr_service = OCRService()

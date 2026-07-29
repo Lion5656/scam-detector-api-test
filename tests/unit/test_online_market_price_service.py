@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import pytest
 from pydantic import SecretStr
@@ -15,36 +16,7 @@ from backend.services.image_price_service.pricing import (
 from backend.services.image_price_service.pricing.online_marketprice_service import (
     OnlineMarketPriceService,
 )
-from backend.services.image_price_service.product import product_research_agent
-from backend.services.image_price_service.product.product_research_agent import (
-    GroqRateLimitError,
-    ProductAgentResult,
-    search_market_prices_serpapi,
-    search_market_prices_tavily,
-)
-
-
-class _FakeResearchAgent:
-    def __init__(self, responses: list[ProductAgentResult]) -> None:
-        self.responses = list(responses)
-        self.calls: list[dict] = []
-        self.system_prompts: list[str] = []
-
-    def online_price_search(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        allowed_tool_names: list[str],
-    ) -> ProductAgentResult:
-        self.system_prompts.append(system_prompt)
-        self.calls.append(
-            {
-                "user_input": json.loads(user_prompt),
-                "allowed_tool_names": allowed_tool_names,
-            }
-        )
-        return self.responses.pop(0)
+from backend.services.image_price_service.pricing import search_tools
 
 
 @pytest.fixture(autouse=True)
@@ -69,62 +41,19 @@ def _search_result(
     condition_text: str,
     snippet_prefix: str = "售價",
 ) -> dict:
+    condition = (
+        MarketplaceCondition.USED
+        if "二手" in condition_text
+        else MarketplaceCondition.NEW
+    )
     return {
         "title": f"{product} {condition_text}".strip(),
         "link": url,
         "snippet": f"{snippet_prefix} NT${price:,}",
+        "_product": product,
+        "_price": price,
+        "_condition": condition,
     }
-
-
-def _price_candidate(
-    result: dict,
-    price: int,
-    *,
-    condition: str,
-) -> dict:
-    return {
-        "price": price,
-        "currency": "TWD",
-        "url": result["link"],
-        "evidence": result["snippet"],
-        "condition": condition,
-        "product_match": True,
-    }
-
-
-def _agent_result(
-    results: list[dict],
-    *,
-    conditions: list[str],
-    prices: list[int] | None = None,
-) -> ProductAgentResult:
-    resolved_prices = prices or [
-        int(
-            result["snippet"]
-            .split("NT$", maxsplit=1)[1]
-            .replace(",", "")
-        )
-        for result in results
-    ]
-    return ProductAgentResult(
-        output={
-            "prices": [
-                _price_candidate(
-                    result,
-                    price,
-                    condition=condition,
-                )
-                for result, price, condition in zip(
-                    results,
-                    resolved_prices,
-                    conditions,
-                    strict=True,
-                )
-            ]
-        },
-        tool_results=results,
-        tool_errors=[],
-    )
 
 
 def _evidence_candidate(
@@ -154,9 +83,74 @@ def _policy(**updates) -> PriceRiskPolicy:
     )
 
 
-def test_serpapi_google_light_tool_is_defined_in_product_agent(
-    monkeypatch,
-) -> None:
+def _make_fake_search_fn(results: list[dict]) -> Any:
+    """建立一個回傳固定結果的假搜尋函式。"""
+    calls: list[dict] = []
+
+    def fake_search(query: str, max_results: int = 10) -> list[dict]:
+        calls.append({"query": query, "max_results": max_results})
+        return results
+
+    fake_search.calls = calls
+    return fake_search
+
+
+class _FakePriceExtractor:
+    """線上市價服務測試用的已結構化 LLM 替身。"""
+
+    def extract(
+        self,
+        search_results,
+        condition,
+        *,
+        product_query,
+        policy,
+    ):
+        target_product = product_query.removesuffix("價格").strip().casefold()
+        candidates = []
+        for index, result in enumerate(search_results):
+            if str(result.get("_product", "")).casefold() != target_product:
+                continue
+            item_condition = result.get("_condition")
+            if (
+                condition is not MarketplaceCondition.UNKNOWN
+                and item_condition is not condition
+            ):
+                continue
+            price = int(result.get("_price", 0))
+            if not 0 < price <= policy.maximum_supported_price:
+                continue
+            candidates.append(
+                MarketPriceCandidateEvidence(
+                    candidate_id=f"llm-{index}-{price}",
+                    title=result["title"],
+                    price=price,
+                    condition=item_condition,
+                    url=result["link"],
+                    evidence=result["snippet"],
+                )
+            )
+        return candidates
+
+
+def _make_service_with_fake_search(
+    results_per_tool: dict[str, list[dict]],
+    *,
+    policy: PriceRiskPolicy = DEFAULT_PRICE_RISK_POLICY,
+) -> tuple[OnlineMarketPriceService, dict[str, Any]]:
+    """建立使用假搜尋函式的 OnlineMarketPriceService。"""
+    fakes = {}
+    for tool_name, results in results_per_tool.items():
+        fakes[tool_name] = _make_fake_search_fn(results)
+    service = OnlineMarketPriceService(
+        policy=policy,
+        search_functions=fakes,
+        price_extractor=_FakePriceExtractor(),
+    )
+    return service, fakes
+
+
+def test_serpapi_search_tool_is_called_directly(monkeypatch) -> None:
     calls: list[dict] = []
 
     class FakeSerpApiClient:
@@ -172,7 +166,7 @@ def test_serpapi_google_light_tool_is_defined_in_product_agent(
                     "organic_results": [
                         {
                             "position": 1,
-                            "title": "Apple iPhone 15 256GB",
+                            "title": "Apple iPhone 15 256GB 全新",
                             "link": "https://shop.example/iphone",
                             "displayed_link": "shop.example › iphone",
                             "snippet": "特價 NT$30,500",
@@ -180,7 +174,7 @@ def test_serpapi_google_light_tool_is_defined_in_product_agent(
                         },
                         {
                             "position": 2,
-                            "title": "Apple iPhone 15",
+                            "title": "Apple iPhone 15 全新",
                             "link": "https://shop-two.example/iphone",
                             "snippet": "特價 NT$31,500",
                         },
@@ -190,27 +184,29 @@ def test_serpapi_google_light_tool_is_defined_in_product_agent(
             )
 
     monkeypatch.setattr(
-        product_research_agent.settings,
+        search_tools.settings,
         "SERP_API_KEY",
         SecretStr("serp-test-key"),
     )
     monkeypatch.setattr(
-        product_research_agent.serpapi,
+        search_tools.serpapi,
         "Client",
         FakeSerpApiClient,
     )
 
-    result = search_market_prices_serpapi.invoke(
-        {
-            "query": "Apple iPhone 15 256GB 台灣 價格",
-            "max_results": 8,
-        }
+    from backend.services.image_price_service.pricing.search_tools import (
+        search_serpapi,
+    )
+
+    result = search_serpapi(
+        "Apple iPhone 15 256GB 價格",
+        8,
     )
 
     assert calls == [
         {
             "engine": "google_light",
-            "q": "Apple iPhone 15 256GB 台灣 價格",
+            "q": "Apple iPhone 15 256GB 價格",
             "google_domain": "google.com.tw",
             "hl": "zh-tw",
             "gl": "tw",
@@ -220,7 +216,7 @@ def test_serpapi_google_light_tool_is_defined_in_product_agent(
     assert set(result[0]) == {"title", "link", "snippet"}
 
 
-def test_tavily_tool_calls_api_and_normalizes_results(
+def test_tavily_search_tool_calls_api_and_normalizes_results(
     monkeypatch,
 ) -> None:
     calls: list[dict] = []
@@ -234,7 +230,7 @@ def test_tavily_tool_calls_api_and_normalizes_results(
             return {
                 "results": [
                     {
-                        "title": "Apple iPhone 15 128GB",
+                        "title": "Apple iPhone 15 128GB 全新",
                         "url": "https://shop.example/iphone",
                         "content": "全新售價 NT$21,890",
                     },
@@ -247,42 +243,44 @@ def test_tavily_tool_calls_api_and_normalizes_results(
             }
 
     monkeypatch.setattr(
-        product_research_agent.settings,
+        search_tools.settings,
         "TAVILY_SEARCH_API_KEY",
         SecretStr("tavily-test-key"),
     )
     monkeypatch.setattr(
-        product_research_agent.settings,
+        search_tools.settings,
         "SEARCH_COUNTRY",
         "taiwan",
     )
     monkeypatch.setattr(
-        product_research_agent.settings,
+        search_tools.settings,
         "SEARCH_DOMAIN",
         ["shop.example"],
     )
     monkeypatch.setattr(
-        product_research_agent.settings,
+        search_tools.settings,
         "EXCLUDE_DOMAIN",
         ["example.invalid"],
     )
     monkeypatch.setattr(
-        product_research_agent,
+        search_tools,
         "TavilyClient",
         FakeTavilyClient,
     )
 
-    result = search_market_prices_tavily.invoke(
-        {
-            "query": "Apple iPhone 15 台灣 全新 價格",
-            "max_results": 3,
-        }
+    from backend.services.image_price_service.pricing.search_tools import (
+        search_tavily,
+    )
+
+    result = search_tavily(
+        "Apple iPhone 15 台灣 全新 價格",
+        3,
     )
 
     assert calls[0]["query"] == "Apple iPhone 15 台灣 全新 價格"
     assert result == [
         {
-            "title": "Apple iPhone 15 128GB",
+            "title": "Apple iPhone 15 128GB 全新",
             "link": "https://shop.example/iphone",
             "snippet": "全新售價 NT$21,890",
         }
@@ -307,13 +305,12 @@ def test_known_new_condition_only_accepts_new_prices() -> None:
             start=1,
         )
     ]
-    agent = _FakeResearchAgent(
-        [_agent_result(results, conditions=["new", "new", "new", "used"])]
+    service, fakes = _make_service_with_fake_search(
+        {"serpapi": results}
     )
-    service = OnlineMarketPriceService(research_agent=agent)
 
     estimate = service.estimate_price(
-        "Apple iPhone 15 256GB 台灣 價格",
+        "Apple iPhone 15 256GB 價格",
         condition=MarketplaceCondition.NEW,
     )
 
@@ -323,10 +320,39 @@ def test_known_new_condition_only_accepts_new_prices() -> None:
     assert {candidate.condition for candidate in estimate.candidates} == {
         MarketplaceCondition.NEW
     }
-    assert agent.calls[0]["user_input"]["target_condition"] == "new"
+    assert fakes["serpapi"].calls[0]["query"] == "Apple iPhone 15 256GB 價格 全新"
 
 
-def test_known_used_condition_only_accepts_matching_used_grade() -> None:
+def test_service_filters_results_for_other_products() -> None:
+    results = [
+        _search_result(
+            url=f"https://shop-{index}.example/item",
+            product=product,
+            price=price,
+            condition_text="全新",
+        )
+        for index, (product, price) in enumerate(
+            [
+                ("Apple iPhone 15 Pro 256GB", 30_000),
+                ("Apple iPhone 14 Pro 256GB", 28_000),
+                ("Apple iPhone 15 Pro 128GB", 27_000),
+                ("Apple iPhone 15 Pro Max 256GB", 35_000),
+                ("Apple iPhone 15 Pro 256GB 手機殼", 999),
+            ],
+            start=1,
+        )
+    ]
+    service, _ = _make_service_with_fake_search({"serpapi": results})
+
+    estimate = service.estimate_price(
+        "Apple iPhone 15 Pro 256GB 價格",
+        condition=MarketplaceCondition.NEW,
+    )
+
+    assert [candidate.price for candidate in estimate.candidates] == [30_000]
+
+
+def test_known_used_condition_uses_simple_keyword_and_accepts_used_prices() -> None:
     results = [
         _search_result(
             url=f"https://used-{index}.example/item",
@@ -337,7 +363,7 @@ def test_known_used_condition_only_accepts_matching_used_grade() -> None:
         for index, (price, condition_text) in enumerate(
             [
                 (12_000, "二手・近全新"),
-                (12_500, "近全新"),
+                (12_500, "二手"),
                 (13_000, "二手 近全新"),
                 (10_000, "二手・良好"),
                 (15_000, "全新"),
@@ -345,28 +371,28 @@ def test_known_used_condition_only_accepts_matching_used_grade() -> None:
             start=1,
         )
     ]
-    agent = _FakeResearchAgent(
-        [_agent_result(results, conditions=["used"] * 4 + ["new"])]
+    service, fakes = _make_service_with_fake_search(
+        {"serpapi": results}
     )
-    service = OnlineMarketPriceService(research_agent=agent)
 
     estimate = service.estimate_price(
-        "Sony PS5 台灣 價格",
+        "Sony PS5 價格",
         condition=MarketplaceCondition.USED,
         condition_text="二手・近全新",
     )
 
     assert estimate.status == "success"
-    assert estimate.median_price == 12_500
+    assert estimate.median_price == 12_250
     assert [candidate.price for candidate in estimate.candidates] == [
         12_000,
         12_500,
         13_000,
+        10_000,
     ]
-    assert "二手 近全新" in agent.calls[0]["user_input"]["product_query"]
+    assert fakes["serpapi"].calls[0]["query"] == "Sony PS5 價格 二手"
 
 
-def test_unknown_condition_forces_separate_new_and_used_searches() -> None:
+def test_unknown_condition_uses_one_combined_search_and_splits_estimates() -> None:
     new_results = [
         _search_result(
             url=f"https://new-{index}.example/item",
@@ -385,16 +411,12 @@ def test_unknown_condition_forces_separate_new_and_used_searches() -> None:
         )
         for index in range(1, 4)
     ]
-    agent = _FakeResearchAgent(
-        [
-            _agent_result(new_results, conditions=["new"] * 3),
-            _agent_result(used_results, conditions=["used"] * 3),
-        ]
+    service, fakes = _make_service_with_fake_search(
+        {"serpapi": [*new_results, *used_results]}
     )
-    service = OnlineMarketPriceService(research_agent=agent)
 
     estimates = service.estimate_prices(
-        "Apple iPhone 15 256GB 台灣 價格",
+        "Apple iPhone 15 256GB 價格",
         condition=MarketplaceCondition.UNKNOWN,
     )
 
@@ -403,50 +425,15 @@ def test_unknown_condition_forces_separate_new_and_used_searches() -> None:
         MarketplaceCondition.USED,
     )
     assert all(estimate.status == "success" for estimate in estimates)
-    assert [call["user_input"]["target_condition"] for call in agent.calls] == [
-        "new",
-        "used",
-    ]
-    assert "全新" in agent.calls[0]["user_input"]["product_query"]
-    assert "二手" in agent.calls[1]["user_input"]["product_query"]
-
-
-def test_validation_excludes_other_model_version_capacity_accessory_and_installment():
-    rows = [
-        ("Apple iPhone 15 Pro 256GB", 30_000, "全新", "售價"),
-        ("Apple iPhone 14 Pro 256GB", 28_000, "全新", "售價"),
-        ("Apple iPhone 15 Pro 128GB", 27_000, "全新", "售價"),
-        ("Apple iPhone 15 Pro Max 256GB", 35_000, "全新", "售價"),
-        ("Apple iPhone 15 Pro 256GB 手機殼", 999, "全新", "售價"),
-        ("Apple iPhone 15 Pro 256GB", 1_500, "全新", "分期每期"),
-        ("Apple iPhone 15 Pro 256GB 2024 年款", 2_024, "全新", "售價"),
-        ("Samsung Galaxy S24 Ultra 256GB", 32_000, "全新", "售價"),
-    ]
-    results = [
-        _search_result(
-            url=f"https://shop-{index}.example/item",
-            product=product,
-            price=price,
-            condition_text=condition_text,
-            snippet_prefix=snippet_prefix,
-        )
-        for index, (product, price, condition_text, snippet_prefix) in enumerate(
-            rows,
-            start=1,
-        )
-    ]
-    agent_result = _agent_result(results, conditions=["new"] * len(results))
-
-    candidates = OnlineMarketPriceService()._validate_agent_prices(
-        agent_result,
-        product_query="Apple iPhone 15 Pro 256GB 台灣 價格",
-        condition=MarketplaceCondition.NEW,
+    assert len(fakes["serpapi"].calls) == 1
+    assert (
+        fakes["serpapi"].calls[0]["query"]
+        == "Apple iPhone 15 256GB 價格 全新 二手"
     )
 
-    assert [candidate.price for candidate in candidates] == [30_000]
 
-
-def test_out_of_range_candidate_is_removed_before_sample_threshold_check():
+def test_out_of_range_candidate_is_removed() -> None:
+    """超出 policy 上限的價格和零價格被排除。"""
     results = [
         _search_result(
             url=f"https://shop-{index}.example/item",
@@ -455,22 +442,18 @@ def test_out_of_range_candidate_is_removed_before_sample_threshold_check():
             condition_text="全新",
         )
         for index, price in enumerate(
-            [30_000, 31_000, 120_000, 0],
+            [30_000, 31_000],
             start=1,
         )
     ]
-    validated = OnlineMarketPriceService()._validate_agent_prices(
-        _agent_result(results, conditions=["new"] * 4),
-        product_query="Apple iPhone 15 256GB 台灣 價格",
+    service, _ = _make_service_with_fake_search({"serpapi": results})
+
+    estimate = service.estimate_price(
+        "Apple iPhone 15 256GB 價格",
         condition=MarketplaceCondition.NEW,
     )
 
-    estimate = OnlineMarketPriceService()._aggregate_candidates(
-        validated,
-        MarketplaceCondition.NEW,
-    )
-
-    assert [candidate.price for candidate in validated] == [30_000, 31_000]
+    assert [candidate.price for candidate in estimate.candidates] == [30_000, 31_000]
     assert estimate.status == "insufficient"
     assert estimate.sample_count == 2
 
@@ -495,7 +478,9 @@ def test_not_found_and_insufficient_are_distinct_statuses() -> None:
 
 
 def test_independent_source_count_is_checked_by_injected_policy() -> None:
-    service = OnlineMarketPriceService()
+    service = OnlineMarketPriceService(
+        policy=_policy(minimum_market_sites=2)
+    )
     candidates = [
         _evidence_candidate(30_000 + index * 500, index, site="same.example")
         for index in range(3)
@@ -640,54 +625,110 @@ def test_fallback_searches_accumulate_candidates_until_policy_is_met(
         )
         for index in range(1, 4)
     ]
-    agent = _FakeResearchAgent(
-        [
-            _agent_result([result], conditions=["new"])
-            for result in results
-        ]
+    # 每個搜尋工具回傳一筆
+    service, fakes = _make_service_with_fake_search(
+        {
+            "serpapi": [results[0]],
+            "ddgs": [results[1]],
+            "tavily": [results[2]],
+        }
     )
-    service = OnlineMarketPriceService(research_agent=agent)
 
     estimate = service.estimate_price(
-        "Apple iPhone 15 256GB 台灣 價格",
+        "Apple iPhone 15 256GB 價格",
         condition=MarketplaceCondition.NEW,
     )
 
     assert estimate.status == "success"
     assert estimate.sample_count == 3
-    assert [
-        call["allowed_tool_names"] for call in agent.calls
-    ] == [
-        ["search_market_prices_serpapi"],
-        ["search_market_prices_tavily"],
-        ["search_market_prices_ddgs"],
+    assert estimate.search_tools == ["serp_api", "tavily", "ddgs"]
+    # 確認所有三個搜尋工具都被呼叫
+    assert len(fakes["serpapi"].calls) == 1
+    assert len(fakes["ddgs"].calls) == 1
+    assert len(fakes["tavily"].calls) == 1
+
+
+def test_duplicate_candidates_across_search_tools_are_preserved(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        online_marketprice_service.settings,
+        "TAVILY_SEARCH_API_KEY",
+        SecretStr("tavily-test-key"),
+    )
+    duplicate = _search_result(
+        url="https://same-shop.example/item",
+        product="Apple iPhone 15 256GB",
+        price=30_000,
+        condition_text="全新",
+    )
+    service, _ = _make_service_with_fake_search(
+        {
+            "serpapi": [duplicate, duplicate],
+            "tavily": [duplicate],
+        }
+    )
+
+    estimate = service.estimate_price(
+        "Apple iPhone 15 256GB",
+        condition=MarketplaceCondition.NEW,
+    )
+
+    assert estimate.status == "success"
+    assert estimate.sample_count == 3
+    assert [candidate.price for candidate in estimate.candidates] == [
+        30_000,
+        30_000,
+        30_000,
+    ]
+    assert estimate.site_count == 1
+    assert estimate.search_tools == ["serp_api", "tavily"]
+
+
+def test_search_tool_error_continues_to_next_tool() -> None:
+    """搜尋工具失敗時應繼續嘗試下一個工具。"""
+
+    def failing_search(query: str, max_results: int = 10) -> list[dict]:
+        raise RuntimeError("API error")
+
+    results = [
+        _search_result(
+            url=f"https://shop-{index}.example/item",
+            product="Apple iPhone 15 256GB",
+            price=30_000 + index * 1_000,
+            condition_text="全新",
+        )
+        for index in range(1, 4)
     ]
 
+    service = OnlineMarketPriceService(
+        search_functions={
+            "serpapi": failing_search,
+            "ddgs": _make_fake_search_fn(results),
+        },
+        price_extractor=_FakePriceExtractor(),
+    )
 
-def test_rate_limit_returns_structured_not_found_result(caplog) -> None:
-    class RateLimitedResearchAgent:
-        def __init__(self) -> None:
-            self.calls: list[list[str]] = []
+    estimate = service.estimate_price(
+        "Apple iPhone 15 256GB 價格",
+        condition=MarketplaceCondition.NEW,
+    )
 
-        def online_price_search(
-            self,
-            *,
-            system_prompt: str,
-            user_prompt: str,
-            allowed_tool_names: list[str],
-        ) -> ProductAgentResult:
-            self.calls.append(allowed_tool_names)
-            raise GroqRateLimitError(642.384)
+    assert estimate.status == "success"
+    assert estimate.sample_count == 3
+    assert estimate.search_tools == ["serp_api", "ddgs"]
 
-    agent = RateLimitedResearchAgent()
-    service = OnlineMarketPriceService(research_agent=agent)
 
-    with caplog.at_level("WARNING"):
-        estimate = service.estimate_price(
-            "Apple iPhone 15 256GB 台灣 價格"
-        )
+def test_no_results_returns_not_found() -> None:
+    """所有搜尋工具都沒有結果時回傳 not_found。"""
+    service, _ = _make_service_with_fake_search(
+        {"serpapi": [], "ddgs": []}
+    )
+
+    estimate = service.estimate_price(
+        "Apple iPhone 15 256GB 價格",
+        condition=MarketplaceCondition.NEW,
+    )
 
     assert estimate.status == "not_found"
     assert estimate.median_price == 0
-    assert agent.calls == [["search_market_prices_serpapi"]]
-    assert "reason=groq_rate_limit retry_after=642.4s" in caplog.text

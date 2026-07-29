@@ -11,8 +11,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.config import settings
-from backend.services.image_price_service.product.product_research_agent import (
-    search_market_prices_tavily,
+from backend.services.image_price_service.pricing.search_tools import (
+    search_tavily,
 )
 
 
@@ -60,11 +60,9 @@ def main() -> int:
 
     print(f"正在呼叫 Tavily：query={args.query!r}, max_results={args.max_results}")
     try:
-        results = search_market_prices_tavily.invoke(
-            {
-                "query": args.query,
-                "max_results": args.max_results,
-            }
+        results = search_tavily(
+            args.query,
+            args.max_results,
         )
     except Exception as error:
         print(

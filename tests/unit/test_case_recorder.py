@@ -1,4 +1,11 @@
-from backend.services.dto.price_analysis import ImagePriceAnalysisResult
+from backend.services.dto.price_analysis import (
+    ImagePriceAnalysisResult,
+    MarketPriceCandidateEvidence,
+    MarketPriceEstimate,
+)
+from backend.services.image_price_service.domain.models import (
+    MarketplaceCondition,
+)
 from backend.services.image_price_service.case_recorder import record_case
 
 
@@ -24,6 +31,35 @@ def _result() -> ImagePriceAnalysisResult:
         listed_price=25_000,
         market_price=31_234,
         market_price_source="online",
+        market_price_estimates=(
+            MarketPriceEstimate(
+                status="success",
+                condition=MarketplaceCondition.USED,
+                reference_mode="iqr",
+                median_price=31_234,
+                low_price=29_000,
+                high_price=33_000,
+                sample_count=5,
+                site_count=3,
+                source="online",
+                confidence=0.8,
+                candidates=(
+                    MarketPriceCandidateEvidence(
+                        candidate_id="candidate-1",
+                        title="Apple iPhone 15",
+                        price=31_234,
+                        condition=MarketplaceCondition.USED,
+                        url="https://example.com/iphone",
+                        evidence="二手售價 31,234",
+                    ),
+                ),
+            ),
+        ),
+        condition=MarketplaceCondition.USED,
+        condition_detail="近全新",
+        condition_source_text="狀況 二手・近全新",
+        condition_extraction_confidence=0.97,
+        evidence=["used 市場區間 29,000～33,000"],
     )
 
 
@@ -38,6 +74,13 @@ def test_record_case_preserves_existing_payload_fields(monkeypatch):
     assert repository.payload is not None
     assert repository.payload["selling_price"] == 25_000
     assert repository.payload["market_price_source"] == "online"
+    assert repository.payload["market_price"] == 31_234
+    assert repository.payload["condition_detail"] == "近全新"
+    assert repository.payload["condition_source_text"] == "狀況 二手・近全新"
+    assert repository.payload["condition_extraction_confidence"] == 0.97
+    estimate = repository.payload["market_price_estimates"][0]
+    assert estimate["low_price"] == 29_000
+    assert "candidates" not in estimate
     assert "listed_price" not in repository.payload
 
 

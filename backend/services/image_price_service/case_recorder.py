@@ -27,11 +27,17 @@ def record_case(
                 "selling_price": result.listed_price,
                 "market_price": result.market_price,
                 "market_price_source": result.market_price_source,
+                "market_price_estimates": [
+                    estimate.model_dump(exclude={"candidates"}, mode="json")
+                    for estimate in result.market_price_estimates
+                ],
                 "risk_label": result.risk_label,
                 "risk_score": result.score,
                 "reason": result.reason,
+                "evidence": result.evidence,
                 "confidence": result.confidence,
                 "decision_layer": result.decision_layer,
+                "error_code": result.error_code,
                 "extracted_text": result.extracted_text,
                 "marketplace_layout": result.marketplace_layout,
                 "marketplace_confidence": result.marketplace_confidence,
@@ -39,6 +45,11 @@ def record_case(
                 "price_extraction_reason": result.price_extraction_reason,
                 "seller_name": result.seller_name,
                 "condition": result.condition,
+                "condition_detail": result.condition_detail,
+                "condition_source_text": result.condition_source_text,
+                "condition_extraction_confidence": (
+                    result.condition_extraction_confidence
+                ),
                 "extraction_warnings": result.extraction_warnings,
             }
         )

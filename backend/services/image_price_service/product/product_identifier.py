@@ -18,7 +18,7 @@ logging = logging.getLogger(__name__)
 
 PRODUCT_NORMALIZATION_SYSTEM_PROMPT = """
 你是商品資訊正規化助手。請針對購物平台 OCR 文字進行一次審查，整理可確認的
-品牌、品名、型號、版本、尺寸、容量、品況與其他有助於搜尋的規格。
+品名、型號、容量，規格作為查詢關鍵字。
 
 規則：
 1. 修正明顯 OCR 錯字，但不可捏造無法確認的型號或規格。
@@ -30,7 +30,7 @@ PRODUCT_NORMALIZATION_SYSTEM_PROMPT = """
 只回傳以下 JSON，不要加入 Markdown 或額外說明：
 {
   "product_name": "標準商品名稱",
-  "brand_model": "品牌與型號",
+  "brand_model": "型號",
   "known_specs": ["已確認的規格"]
 }
 """.strip()
@@ -151,9 +151,8 @@ class ProductIdentifier:
         brand_model: str,
         known_specs: list[str],
     ) -> str:
-        """建立台灣市場價格搜尋詞。"""
-        parts: list[str] = []
-        seen: set[str] = set()
+        """只使用最精簡的商品識別名稱與「價格」建立搜尋詞。"""
+        del known_specs
         unknown_values = {
             "",
             "一般商品",
@@ -161,17 +160,16 @@ class ProductIdentifier:
             "未知型號",
             "未知品牌型號",
         }
-        for value in [brand_model, product_name, *known_specs]:
-            cleaned = str(value).strip()
-            normalized = cleaned.casefold()
-            if cleaned in unknown_values or normalized in seen:
-                continue
-            seen.add(normalized)
-            parts.append(cleaned)
-
-        if not parts:
+        normalized_model = str(brand_model).strip().replace(" ", "")
+        normalized_name = str(product_name).strip().replace(" ", "")
+        search_name = (
+            normalized_model
+            if normalized_model not in unknown_values
+            else normalized_name
+        )
+        if search_name in unknown_values:
             return ""
-        return f"{' '.join(parts)} 價格"
+        return f"{search_name} 價格"
 
 
 product_identifier = ProductIdentifier()

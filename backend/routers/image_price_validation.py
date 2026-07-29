@@ -12,6 +12,7 @@ from backend.schemas.image import (
     ImagePriceDebugInfo,
     ImagePriceResponse,
     ImageUploadResponse,
+    MarketPriceEstimateResponse,
 )
 from backend.services.image_price_service.image_price_analyzer import (
     image_price_analyzer,
@@ -85,15 +86,31 @@ async def analyze_image_price(file: UploadFile = File(...)) -> ImagePriceRespons
         return ImagePriceResponse(
             product_name=result.product_name if result.success else None,
             listed_price=result.listed_price if result.success else None,
-            online_price=result.market_price if result.success else None,
+            market_price=( result.market_price if result.success and result.market_price > 0 else None ),
             seller_name=result.seller_name if result.success else None,
             risk_label=result.risk_label,
             condition=result.condition,
+            condition_detail=result.condition_detail,
+            risk_score=result.score,
+            decision_layer=result.decision_layer,
+            error_code=result.error_code,
             extraction_confidence=result.extraction_confidence if result.success else None,
             result=result.reason,
             debug=ImagePriceDebugInfo(
-                search_tool=result.search_tool,
+                search_tools=result.search_tools,
                 market_price_source=result.market_price_source,
+                market_price_estimates=tuple(
+                    MarketPriceEstimateResponse(
+                        **estimate.model_dump(
+                            exclude={"candidates", "search_tools"}
+                        )
+                    )
+                    for estimate in result.market_price_estimates
+                ),
+                condition_source_text=result.condition_source_text,
+                condition_extraction_confidence=(
+                    result.condition_extraction_confidence
+                ),
                 price_source_text=result.price_source_text,
                 warnings=warnings,
             ),
