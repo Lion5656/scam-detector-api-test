@@ -6,18 +6,17 @@ import re
 import unicodedata
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.config import settings
+from backend.providers import groq_provider
 from backend.services.dto.price_analysis import MarketPriceCandidateEvidence
-from backend.services.image_price_service.domain.models import MarketplaceCondition
+from backend.services.image_price_service.domain.models import \
+    MarketplaceCondition
 from backend.services.image_price_service.domain.policy import (
-    DEFAULT_PRICE_RISK_POLICY,
-    PriceRiskPolicy,
-)
-from backend.services.image_price_service.pricing.url_utils import (
-    normalize_url,
-)
+    DEFAULT_PRICE_RISK_POLICY, PriceRiskPolicy)
+from backend.services.image_price_service.pricing.url_utils import \
+    normalize_url
 
 logger = logging.getLogger(__name__)
 
@@ -90,35 +89,33 @@ class SearchPriceExtraction(BaseModel):
     candidates: list[ExtractedSearchPrice] = Field(default_factory=list)
 
 
-class GroqSearchResultPriceExtractor:
+class SearchResultPriceExtractor:
     """延遲建立 Groq client，並以一次 structured-output 呼叫整理價格。"""
 
     def __init__(
         self,
         *,
-        api_key: str,
+        api_key: str | None = None,
         model_name: str,
         structured_llm: Any | None = None,
     ) -> None:
-        self._api_key = api_key.strip()
+        self._api_key = api_key.strip() if api_key else None
         self._model_name = model_name.strip()
         self._structured_llm = structured_llm
 
     def _get_structured_llm(self) -> Any:
         if self._structured_llm is not None:
             return self._structured_llm
-        if not self._api_key:
+        if not groq_provider.is_configured(self._api_key):
             raise RuntimeError("尚未設定 GROQ_API_KEY，無法整理搜尋結果價格")
         if not self._model_name:
             raise RuntimeError("尚未設定價格整理模型")
 
-        from langchain_groq import ChatGroq
-
-        llm = ChatGroq(
+        llm = groq_provider.create(
             model=self._model_name,
             temperature=0,
-            reasoning_effort="none",
-            api_key=SecretStr(self._api_key),
+            reasoning_effort="medium", # 根據不同模型調整
+            api_key=self._api_key,
         )
         self._structured_llm = llm.with_structured_output(
             SearchPriceExtraction,
@@ -277,9 +274,8 @@ def _validate_candidates(
     return candidates
 
 
-default_search_result_price_extractor = GroqSearchResultPriceExtractor(
-    api_key=settings.GROQ_API_KEY.get_secret_value(),
-    model_name=settings.PRODUCT_MODEL_NAME,
+default_search_result_price_extractor = SearchResultPriceExtractor(
+    model_name=settings.PRICE_MODEL,
 )
 
 
@@ -289,7 +285,7 @@ def extract_prices_from_search_results(
     *,
     product_query: str,
     policy: PriceRiskPolicy = DEFAULT_PRICE_RISK_POLICY,
-    extractor: GroqSearchResultPriceExtractor | None = None,
+    extractor: SearchResultPriceExtractor | None = None,
 ) -> list[MarketPriceCandidateEvidence]:
     """相容函式：以一次 LLM 呼叫整理整批搜尋結果。"""
     active_extractor = extractor or default_search_result_price_extractor
@@ -303,7 +299,7 @@ def extract_prices_from_search_results(
 
 __all__ = [
     "ExtractedSearchPrice",
-    "GroqSearchResultPriceExtractor",
+    "SearchResultPriceExtractor",
     "SearchPriceExtraction",
     "extract_prices_from_search_results",
 ]

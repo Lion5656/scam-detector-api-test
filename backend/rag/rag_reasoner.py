@@ -1,8 +1,8 @@
 import json
-import os
 from typing import Any
 
 from backend.config import settings
+from backend.providers import groq_provider
 from backend.rag.dto.rag_analysis import RagEvidence, RagResponse
 from backend.rag.rag_retriever import (
     format_context,
@@ -14,17 +14,16 @@ from backend.utils.text_cleaner import normalize_escape_sequences
 
 _rag_chain : Any | None = None
 
-def _require_langchain() -> tuple[Any, Any, Any, Any]:
+def _require_langchain() -> tuple[Any, Any, Any]:
     from langchain_core.output_parsers import JsonOutputParser
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.runnables import RunnablePassthrough
-    from langchain_groq import ChatGroq
 
-    return ChatPromptTemplate, RunnablePassthrough, JsonOutputParser, ChatGroq
+    return ChatPromptTemplate, RunnablePassthrough, JsonOutputParser
 
 
 def _get_prompt() -> Any:
-    ChatPromptTemplate, _, _, _ = _require_langchain()
+    ChatPromptTemplate, _, _ = _require_langchain()
     template = """
         你是一個防詐風險分析專家，請根據訊息內容分析不同風險特徵的符合程度。
 
@@ -79,12 +78,9 @@ def _get_prompt() -> Any:
     return prompt
 
 def _get_llm() -> Any:
-    _, _, _, ChatGroq = _require_langchain()
-    api_key = settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY")
-    return ChatGroq(
-        model_name=settings.RAG_MODEL_NAME, 
-        temperature = 0.1,
-        api_key=api_key,
+    return groq_provider.create(
+        model=settings.RAG_MODEL_NAME,
+        temperature=0.1,
         model_kwargs={
             "top_p": 0.7,
         }
@@ -92,7 +88,7 @@ def _get_llm() -> Any:
 
 
 def _get_parser() -> Any:
-    _, _, JsonOutputParser, _  = _require_langchain()
+    _, _, JsonOutputParser = _require_langchain()
     parser = JsonOutputParser(pydantic_object=RagResponse)
     return parser
 
@@ -103,7 +99,7 @@ def get_rag_chain() -> Any:
     return _rag_chain
 
 def build_rag_chain() -> Any:
-    _, RunnablePassthrough, _, _ = _require_langchain()
+    _, RunnablePassthrough, _ = _require_langchain()
 
     prompt = _get_prompt()
     retriever = get_retriever()

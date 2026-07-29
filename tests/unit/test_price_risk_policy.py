@@ -6,23 +6,16 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from backend.services.dto.price_analysis import MarketPriceEstimate
-from backend.services.image_price_service.image_price_analyzer import (
-    default_decision_engine,
-    default_online_price_service,
-)
-from backend.services.image_price_service.domain.models import (
-    MarketplaceCondition,
-)
+from backend.services.image_price_service.domain.models import \
+    MarketplaceCondition
 from backend.services.image_price_service.domain.policy import (
-    DEFAULT_PRICE_RISK_POLICY,
-    PriceRiskPolicy,
-)
-from backend.services.image_price_service.pricing.online_marketprice_service import (
-    OnlineMarketPriceService,
-)
-from backend.services.image_price_service.risk.fusion_decision_engine import (
-    FusionDecisionEngine,
-)
+    DEFAULT_PRICE_RISK_POLICY, PriceRiskPolicy)
+from backend.services.image_price_service.image_price_analyzer import (
+    default_decision_engine, default_online_price_service)
+from backend.services.image_price_service.pricing.online_marketprice_service import \
+    OnlineMarketPriceService
+from backend.services.image_price_service.risk.fusion_decision_engine import \
+    FusionDecisionEngine
 
 
 def _policy_data(**updates):
@@ -255,13 +248,11 @@ def test_custom_policy_changes_supported_market_price_boundary():
             maximum_supported_price=500,
         )
     )
+    from backend.services.image_price_service.domain.models import \
+        MarketplaceCondition
     from backend.services.image_price_service.pricing.search_result_price_extractor import (
-        GroqSearchResultPriceExtractor,
-        SearchPriceExtraction,
-        ExtractedSearchPrice,
-        extract_prices_from_search_results,
-    )
-    from backend.services.image_price_service.domain.models import MarketplaceCondition
+        ExtractedSearchPrice, SearchPriceExtraction,
+        SearchResultPriceExtractor, extract_prices_from_search_results)
 
     class FakeStructuredLLM:
         def __init__(self, price):
@@ -280,7 +271,7 @@ def test_custom_policy_changes_supported_market_price_boundary():
             )
 
     def extractor_for(price):
-        return GroqSearchResultPriceExtractor(
+        return SearchResultPriceExtractor(
             api_key="",
             model_name="test",
             structured_llm=FakeStructuredLLM(price),

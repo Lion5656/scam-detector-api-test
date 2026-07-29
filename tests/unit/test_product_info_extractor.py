@@ -13,8 +13,8 @@ from backend.services.image_price_service.product import (
 from backend.services.image_price_service.product.product_identifier import (
     ProductIdentifier,
 )
-from backend.services.image_price_service.product.product_research_agent import (
-    ProductResearchAgent,
+from backend.services.image_price_service.product.product_info_extractor import (
+    ProductInfoExtractor,
 )
 
 
@@ -29,7 +29,7 @@ class _FakeMarketRepository:
         return self.result
 
 
-class _FakeResearchAgent:
+class _FakeInfoExtractor:
     def __init__(self, response: dict) -> None:
         self.response = response
         self.calls: list[dict[str, str]] = []
@@ -49,7 +49,7 @@ class _FakeResearchAgent:
         return self.response
 
 
-def test_product_agent_executes_json_ai_request_without_tools() -> None:
+def test_product_info_extractor_executes_json_ai_request() -> None:
     llm = FakeMessagesListChatModel(
         responses=[
             AIMessage(
@@ -61,7 +61,7 @@ def test_product_agent_executes_json_ai_request_without_tools() -> None:
             )
         ]
     )
-    service = ProductResearchAgent(llm=llm)
+    service = ProductInfoExtractor(llm=llm)
 
     result = service.complete_json(
         system_prompt="只回傳 JSON",
@@ -75,7 +75,7 @@ def test_product_agent_executes_json_ai_request_without_tools() -> None:
 
 
 def test_parse_json_object_accepts_markdown_and_leading_text() -> None:
-    result = ProductResearchAgent._parse_json_object(
+    result = ProductInfoExtractor._parse_json_object(
         "以下是結果：\n```json\n"
         '{"prices":[{"price":9990}]}'
         "\n```\n"
@@ -101,11 +101,11 @@ def test_message_text_reads_structured_content_and_reasoning_fallback() -> None:
     )
 
     assert (
-        ProductResearchAgent._message_text(structured_message)
+        ProductInfoExtractor._message_text(structured_message)
         == '{"prices":[]}'
     )
     assert (
-        ProductResearchAgent._message_text(reasoning_message)
+        ProductInfoExtractor._message_text(reasoning_message)
         == '{"prices":[{"price":9990}]}'
     )
 
@@ -121,7 +121,7 @@ def test_product_identifier_normalizes_product_and_builds_search_query(
             brand_model="未知型號",
         ),
     )
-    research_agent = _FakeResearchAgent(
+    info_extractor = _FakeInfoExtractor(
         {
             "product_name": "Apple iPhone 15",
             "brand_model": "Apple iPhone 15",
@@ -130,7 +130,7 @@ def test_product_identifier_normalizes_product_and_builds_search_query(
     )
     identifier = ProductIdentifier(
         market_repo=_FakeMarketRepository(),
-        research_agent=research_agent,
+        info_extractor=info_extractor,
     )
 
     result = identifier.identify("iphone 15 256g 藍 NT$25,000")
@@ -140,22 +140,22 @@ def test_product_identifier_normalizes_product_and_builds_search_query(
     assert result.known_specs == ["256GB", "藍色"]
     assert result.search_query == "Apple iPhone 15 256GB 藍色 價格"
     assert result.market_price == 0
-    assert len(research_agent.calls) == 1
-    ai_input = json.loads(research_agent.calls[0]["user_prompt"])
+    assert len(info_extractor.calls) == 1
+    ai_input = json.loads(info_extractor.calls[0]["user_prompt"])
     assert ai_input["ocr_text"] == "iphone 15 256g 藍 NT$25,000"
 
 
 def test_product_identifier_builds_query_for_local_market_match() -> None:
-    research_agent = _FakeResearchAgent({})
+    info_extractor = _FakeInfoExtractor({})
     identifier = ProductIdentifier(
         market_repo=_FakeMarketRepository(
             ("Sony 無線降噪耳機", "Sony WH-1000XM5", 9990)
         ),
-        research_agent=research_agent,
+        info_extractor=info_extractor,
     )
 
     result = identifier.identify("WH-1000XM5")
 
     assert result.search_query == "Sony WH-1000XM5 無線降噪耳機 價格"
     assert result.market_price == 9990
-    assert research_agent.calls == []
+    assert info_extractor.calls == []

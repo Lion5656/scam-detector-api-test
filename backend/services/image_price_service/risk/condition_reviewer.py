@@ -3,8 +3,7 @@
 import json
 from typing import Any
 
-from pydantic import SecretStr
-
+from backend.providers import groq_provider
 from backend.services.dto.price_analysis import DeepAnalysisReview
 
 _REVIEW_CONTEXT_FIELDS = (
@@ -24,30 +23,37 @@ condition_evidence 必須逐字取自這三個欄位其中之一；證據不足�
 """.strip()
 
 
-class GroqConditionReviewer:
-    """延遲建立 Groq client"""
+class ConditionReviewer:
+    """商品狀態複核器"""
 
-    def __init__(self, *, api_key: str, model_name: str) -> None:
-        self._api_key = api_key.strip()
+    def __init__(
+        self,
+        *,
+        model_name: str,
+        api_key: str | None = None,
+    ) -> None:
+        self._api_key = api_key.strip() if api_key else None
         self._model_name = model_name.strip()
 
     def __call__(
         self,
         context: dict[str, object],
     ) -> DeepAnalysisReview | dict[str, object] | None:
-        if not self._api_key or not self._model_name:
+        if (
+            not self._model_name
+            or not groq_provider.is_configured(self._api_key)
+        ):
             return None
-
-        from langchain_groq import ChatGroq
 
         limited_context = {
             field: context.get(field)
             for field in _REVIEW_CONTEXT_FIELDS
         }
-        llm = ChatGroq(
+        llm = groq_provider.create(
             model=self._model_name,
             temperature=0,
-            api_key=SecretStr(self._api_key),
+            reasoning_effort="none",
+            api_key=self._api_key,
         )
         structured_llm: Any = llm.with_structured_output(
             DeepAnalysisReview,
@@ -60,4 +66,4 @@ class GroqConditionReviewer:
         )
 
 
-__all__ = ["GroqConditionReviewer"]
+__all__ = ["ConditionReviewer"]

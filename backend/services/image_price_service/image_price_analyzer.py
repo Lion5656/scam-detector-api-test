@@ -5,45 +5,31 @@ from typing import Any, cast
 
 from backend.config import settings
 from backend.repository.case_repository import case_repository
-from backend.services.dto.price_analysis import (
-    ImagePriceAnalysisResult,
-    MarketPriceEstimate,
-    SearchTool,
-)
+from backend.services.dto.price_analysis import (ImagePriceAnalysisResult,
+                                                 MarketPriceEstimate,
+                                                 SearchTool)
 from backend.services.image_price_service.case_recorder import record_case
 from backend.services.image_price_service.domain.models import (
-    MainPriceExtractionError,
-    MainPriceExtractionResult,
-    MarketplaceCondition,
-    MarketplaceLayout,
-)
-from backend.services.image_price_service.domain.policy import (
-    DEFAULT_PRICE_RISK_POLICY,
-)
-from backend.services.image_price_service.ocr.ocr_service import (
-    ocr_service as default_ocr_service,
-)
-from backend.services.image_price_service.page_analysis.fb_marketplace.fb_marketplace_detector import (
-    fb_marketplace_detector,
-)
-from backend.services.image_price_service.page_analysis.fb_marketplace.fb_marketplace_extractor import (
-    fb_marketplace_price_extractor,
-)
-from backend.services.image_price_service.pricing.market_price_resolver import (
-    resolve_market_price,
-)
-from backend.services.image_price_service.pricing.online_marketprice_service import (
-    OnlineMarketPriceService,
-)
-from backend.services.image_price_service.product.product_identifier import (
-    product_identifier as default_product_identifier,
-)
-from backend.services.image_price_service.risk.condition_reviewer import (
-    GroqConditionReviewer,
-)
-from backend.services.image_price_service.risk.fusion_decision_engine import (
-    FusionDecisionEngine,
-)
+    MainPriceExtractionError, MainPriceExtractionResult, MarketplaceCondition,
+    MarketplaceLayout)
+from backend.services.image_price_service.domain.policy import \
+    DEFAULT_PRICE_RISK_POLICY
+from backend.services.image_price_service.ocr.ocr_service import \
+    ocr_service as default_ocr_service
+from backend.services.image_price_service.page_analysis.fb_marketplace.fb_marketplace_detector import \
+    fb_marketplace_detector
+from backend.services.image_price_service.page_analysis.fb_marketplace.fb_marketplace_extractor import \
+    fb_marketplace_price_extractor
+from backend.services.image_price_service.pricing.market_price_resolver import \
+    resolve_market_price
+from backend.services.image_price_service.pricing.online_marketprice_service import \
+    OnlineMarketPriceService
+from backend.services.image_price_service.product.product_identifier import \
+    product_identifier as default_product_identifier
+from backend.services.image_price_service.risk.condition_reviewer import \
+    ConditionReviewer
+from backend.services.image_price_service.risk.fusion_decision_engine import \
+    FusionDecisionEngine
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +38,8 @@ default_online_price_service = OnlineMarketPriceService(
 )
 default_decision_engine = FusionDecisionEngine(
     policy=DEFAULT_PRICE_RISK_POLICY,
-    condition_reviewer=GroqConditionReviewer(
-        api_key=settings.GROQ_API_KEY.get_secret_value(),
-        model_name=settings.PRODUCT_MODEL_NAME,
+    condition_reviewer=ConditionReviewer(
+        model_name=settings.REVIEW_MODEL,
     ),
 )
 

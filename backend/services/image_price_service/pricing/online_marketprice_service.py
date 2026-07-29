@@ -7,26 +7,19 @@ from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 from backend.config import settings
-from backend.services.dto.price_analysis import (
-    MarketPriceCandidateEvidence,
-    MarketPriceEstimate,
-    SearchTool,
-)
-from backend.services.image_price_service.domain.models import MarketplaceCondition
+from backend.services.dto.price_analysis import (MarketPriceCandidateEvidence,
+                                                 MarketPriceEstimate,
+                                                 SearchTool)
+from backend.services.image_price_service.domain.models import \
+    MarketplaceCondition
 from backend.services.image_price_service.domain.policy import (
-    DEFAULT_PRICE_RISK_POLICY,
-    PriceRiskPolicy,
-)
+    DEFAULT_PRICE_RISK_POLICY, PriceRiskPolicy)
 from backend.services.image_price_service.pricing.search_result_price_extractor import (
-    GroqSearchResultPriceExtractor,
-    default_search_result_price_extractor,
-    extract_prices_from_search_results,
-)
+    SearchResultPriceExtractor, default_search_result_price_extractor,
+    extract_prices_from_search_results)
 from backend.services.image_price_service.pricing.search_tools import (
-    FALLBACK_SEARCH_TOOLS,
-    PRIMARY_SEARCH_TOOL,
-    SEARCH_FUNCTIONS,
-)
+    FALLBACK_SEARCH_TOOLS, PRIMARY_SEARCH_TOOL, SEARCH_FUNCTIONS)
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,7 +37,7 @@ class OnlineMarketPriceService:
         *,
         policy: PriceRiskPolicy = DEFAULT_PRICE_RISK_POLICY,
         search_functions: dict[str, Any] | None = None,
-        price_extractor: GroqSearchResultPriceExtractor | None = None,
+        price_extractor: SearchResultPriceExtractor | None = None,
     ) -> None:
         """建立線上市價服務。"""
         self.policy = policy

@@ -1,24 +1,22 @@
-"""提供商品正規化的 Groq 代理"""
+"""使用 LLM 擷取並正規化商品資訊。"""
 
 import json
-import os
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_groq import ChatGroq
-from pydantic import SecretStr
 
 from backend.config import settings
+from backend.providers import groq_provider
 
-class ProductResearchAgent:
-    """協調 LLM 結構化輸出，用於商品正規化。"""
+class ProductInfoExtractor:
+    """協調 LLM 結構化輸出，用於商品資訊擷取。"""
 
     def __init__(
         self,
         llm: BaseChatModel,
     ) -> None:
-        """建立代理。"""
+        """建立商品資訊擷取器。"""
         self._llm = llm
 
     def complete_json(
@@ -91,18 +89,13 @@ class ProductResearchAgent:
             raise ValueError("Groq 未回傳有效 JSON 物件")
 
 
-def create_product_research_agent() -> ProductResearchAgent:
-    """建立用於商品正規化的 Groq 代理。"""
-    api_key_value = settings.GROQ_API_KEY.get_secret_value() or os.getenv(
-        "GROQ_API_KEY",
-        "",
-    )
-    if not api_key_value:
+def create_product_info_extractor() -> ProductInfoExtractor:
+    """建立使用 Groq 的商品資訊擷取器。"""
+    if not groq_provider.is_configured():
         raise RuntimeError("尚未設定 GROQ_API_KEY")
 
-    llm = ChatGroq(
-        model=settings.PRODUCT_MODEL_NAME,
+    llm = groq_provider.create(
+        model=settings.NORMALIZER_MODEL,
         temperature=0.1,
-        api_key=SecretStr(api_key_value),
     )
-    return ProductResearchAgent(llm=llm)
+    return ProductInfoExtractor(llm=llm)

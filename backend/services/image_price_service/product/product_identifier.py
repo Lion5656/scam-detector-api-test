@@ -11,8 +11,8 @@ from backend.repository.market_price_repository import (
 from backend.services.dto.price_analysis import ProductIdentification
 from backend.services.image_price_service.product.patterm_identifier import \
     pattern_identifier
-from backend.services.image_price_service.product.product_research_agent import (
-    ProductResearchAgent, create_product_research_agent)
+from backend.services.image_price_service.product.product_info_extractor import (
+    ProductInfoExtractor, create_product_info_extractor)
 
 logging = logging.getLogger(__name__)
 
@@ -42,11 +42,11 @@ class ProductIdentifier:
     def __init__(
         self,
         market_repo: MarketPriceRepository | None = None,
-        research_agent: ProductResearchAgent | None = None,
+        info_extractor: ProductInfoExtractor | None = None,
     ) -> None:
         """建立商品辨識器。"""
         self._market_repo = market_repo or market_price_repository
-        self._research_agent = research_agent
+        self._info_extractor = info_extractor
 
     def identify(self, text: str) -> ProductIdentification:
         """辨識商品並回傳正規化資訊。"""
@@ -73,7 +73,7 @@ class ProductIdentifier:
         )
 
         try:
-            normalized = self._get_research_agent().complete_json(
+            normalized = self._get_info_extractor().complete_json(
                 system_prompt=PRODUCT_NORMALIZATION_SYSTEM_PROMPT,
                 user_prompt=user_prompt,
             )
@@ -100,11 +100,11 @@ class ProductIdentifier:
                 brand_model=pattern_product.brand_model,
             )
 
-    def _get_research_agent(self) -> ProductResearchAgent:
-        """取得或建立商品研究代理。"""
-        if self._research_agent is None:
-            self._research_agent = create_product_research_agent()
-        return self._research_agent
+    def _get_info_extractor(self) -> ProductInfoExtractor:
+        """取得或建立商品資訊擷取器。"""
+        if self._info_extractor is None:
+            self._info_extractor = create_product_info_extractor()
+        return self._info_extractor
 
     def _build_identification(
         self,

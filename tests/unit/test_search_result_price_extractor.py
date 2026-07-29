@@ -2,18 +2,13 @@
 
 from typing import Any
 
-from backend.services.image_price_service.domain.models import MarketplaceCondition
+from backend.services.image_price_service.domain.models import \
+    MarketplaceCondition
 from backend.services.image_price_service.domain.policy import (
-    DEFAULT_PRICE_RISK_POLICY,
-    PriceRiskPolicy,
-)
+    DEFAULT_PRICE_RISK_POLICY, PriceRiskPolicy)
 from backend.services.image_price_service.pricing.search_result_price_extractor import (
-    ExtractedSearchPrice,
-    GroqSearchResultPriceExtractor,
-    SearchPriceExtraction,
-    _sanitize_llm_text,
-    extract_prices_from_search_results,
-)
+    ExtractedSearchPrice, SearchPriceExtraction, SearchResultPriceExtractor,
+    _sanitize_llm_text, extract_prices_from_search_results)
 
 
 class FakeStructuredLLM:
@@ -28,10 +23,10 @@ class FakeStructuredLLM:
 
 def _extractor(
     response: SearchPriceExtraction | dict[str, Any],
-) -> tuple[GroqSearchResultPriceExtractor, FakeStructuredLLM]:
+) -> tuple[SearchResultPriceExtractor, FakeStructuredLLM]:
     llm = FakeStructuredLLM(response)
     return (
-        GroqSearchResultPriceExtractor(
+        SearchResultPriceExtractor(
             api_key="",
             model_name="test-model",
             structured_llm=llm,

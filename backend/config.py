@@ -40,7 +40,9 @@ class Settings(BaseSettings):
     RAG_PERSIST_DIR: str = str(ROOT_DIR / "data" / "chroma")
     EMBED_MODEL: str = "BAAI/bge-small-zh-v1.5"
     
-    PRODUCT_MODEL_NAME: str = "qwen/qwen3.6-27b"
+    NORMALIZER_MODEL: str = "openai/gpt-oss-120b"
+    PRICE_MODEL: str = "openai/gpt-oss-120b"
+    REVIEW_MODEL: str = "qwen/qwen3.6-27b"
     TAVILY_SEARCH_API_KEY: SecretStr = SecretStr("")
     SERP_API_KEY: SecretStr = SecretStr("")
     SEARCH_COUNTRY: str = "taiwan"
