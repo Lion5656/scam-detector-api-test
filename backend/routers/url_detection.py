@@ -7,7 +7,7 @@ from backend.services.url_service.url_analyzer import detector
 router = APIRouter(prefix="/v1", tags=["url-detector"])
 
 # url網址分析
-@router.post("/anaylze/url", response_model=UrlResponse, summary="執行url分析")
+@router.post("/analyze/url", response_model=UrlResponse, summary="執行url分析")
 def analyze_url(req: UrlRequest) -> UrlResponse:
     try:
         url = str(req.url)

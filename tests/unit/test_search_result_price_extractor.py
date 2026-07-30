@@ -8,7 +8,9 @@ from backend.services.image_price_service.domain.policy import (
     DEFAULT_PRICE_RISK_POLICY, PriceRiskPolicy)
 from backend.services.image_price_service.pricing.search_result_price_extractor import (
     ExtractedSearchPrice, SearchPriceExtraction, SearchResultPriceExtractor,
-    _sanitize_llm_text, extract_prices_from_search_results)
+    _MAX_LLM_TEXT_CHARS, _MAX_RESULTS_FOR_LLM, _prepare_llm_results,
+    _sanitize_llm_text, _strict_response_format,
+    extract_prices_from_search_results)
 
 
 class FakeStructuredLLM:
@@ -40,7 +42,6 @@ def test_irregular_multi_item_snippet_is_structured_in_one_llm_call() -> None:
     results = [
         {
             "title": "二手動漫景品",
-            "link": "https://shop.example/items",
             "snippet": (
                 f"{evidence} ; 二手拆擺《七龍珠》一番賞經典對戰組合"
                 "代理版A賞超級賽亞人悟飯. $500 ; 七龍珠正版超造集天津飯"
@@ -82,12 +83,10 @@ def test_llm_can_return_multiple_prices_from_different_results() -> None:
     results = [
         {
             "title": "Apple iPhone 15 256GB 全新",
-            "link": "https://one.example/item",
             "snippet": "限時供應，現在 NT$30,500",
         },
         {
             "title": "全新現貨",
-            "link": "https://two.example/item",
             "snippet": "NT$31,000 Apple iPhone 15 256GB",
         },
     ]
@@ -117,10 +116,6 @@ def test_llm_can_return_multiple_prices_from_different_results() -> None:
     )
 
     assert [candidate.price for candidate in candidates] == [30_500, 31_000]
-    assert [candidate.url for candidate in candidates] == [
-        "https://one.example/item",
-        "https://two.example/item",
-    ]
 
 
 def test_duplicate_prices_from_same_result_are_preserved() -> None:
@@ -128,7 +123,6 @@ def test_duplicate_prices_from_same_result_are_preserved() -> None:
     results = [
         {
             "title": "二手七龍珠公仔",
-            "link": "https://shop.example/item",
             "snippet": evidence,
         }
     ]
@@ -165,7 +159,6 @@ def test_code_rejects_hallucinated_evidence_wrong_condition_and_bad_index() -> N
     results = [
         {
             "title": "Sony PS5 二手",
-            "link": "https://shop.example/ps5",
             "snippet": "售價為 12,000 元",
         }
     ]
@@ -209,12 +202,10 @@ def test_code_keeps_policy_boundary_and_rejects_larger_price() -> None:
     results = [
         {
             "title": "目標商品 全新",
-            "link": "https://a.example/1",
             "snippet": f"價格 {maximum} 元",
         },
         {
             "title": "目標商品 全新",
-            "link": "https://b.example/1",
             "snippet": f"價格 {maximum + 1} 元",
         },
     ]
@@ -247,14 +238,13 @@ def test_code_keeps_policy_boundary_and_rejects_larger_price() -> None:
     assert [candidate.price for candidate in candidates] == [maximum]
 
 
-def test_invalid_urls_are_not_sent_to_llm() -> None:
+def test_results_do_not_need_urls_to_be_sent_to_llm() -> None:
     extractor, llm = _extractor({"candidates": []})
 
     candidates = extractor.extract(
         [
             {
                 "title": "商品",
-                "link": "javascript:alert(1)",
                 "snippet": "500 元",
             }
         ],
@@ -263,7 +253,7 @@ def test_invalid_urls_are_not_sent_to_llm() -> None:
     )
 
     assert candidates == []
-    assert llm.calls == []
+    assert len(llm.calls) == 1
 
 
 def test_prompt_uses_system_role_and_defines_empty_output() -> None:
@@ -273,7 +263,6 @@ def test_prompt_uses_system_role_and_defines_empty_output() -> None:
         [
             {
                 "title": "Apple iPhone 15 256GB 二手",
-                "link": "https://shop.example/iphone",
                 "snippet": "售價 NT$20,000",
             }
         ],
@@ -291,6 +280,47 @@ def test_prompt_uses_system_role_and_defines_empty_output() -> None:
     assert '"target_product"' not in messages[1][1]
 
 
+def test_strict_response_format_requires_schema_compliance() -> None:
+    response_format = _strict_response_format()
+
+    assert response_format["type"] == "json_schema"
+    json_schema = response_format["json_schema"]
+    assert json_schema["strict"] is True
+    assert json_schema["name"] == "SearchPriceExtraction"
+    assert json_schema["schema"]["required"] == ["candidates"]
+    assert json_schema["schema"]["additionalProperties"] is False
+    candidate_schema = json_schema["schema"]["properties"]["candidates"]["items"]
+    assert candidate_schema["additionalProperties"] is False
+    assert candidate_schema["required"] == [
+        "result_index",
+        "price",
+        "condition",
+        "evidence",
+    ]
+
+
+def test_llm_search_results_respect_request_size_budget() -> None:
+    results = [
+        {
+            "title": f"商品 {index} " + "標" * 300,
+            "snippet": "價格 NT$20,000 " + "說明" * 1_000,
+        }
+        for index in range(15)
+    ]
+
+    prepared = _prepare_llm_results(results)
+
+    assert len(prepared) == _MAX_RESULTS_FOR_LLM
+    assert all(set(result) == {"title", "snippet"} for result in prepared)
+    assert (
+        sum(
+            len(str(result["title"])) + len(str(result["snippet"]))
+            for result in prepared
+        )
+        <= _MAX_LLM_TEXT_CHARS
+    )
+
+
 def test_sanitize_llm_text_removes_invisible_and_decorative_characters() -> None:
     raw = "🔥\u200b尼卡\u200c魯夫✨ NT$８４０\u200d｜全新★\ufeff"
 
@@ -304,7 +334,6 @@ def test_only_sanitized_search_text_is_sent_to_llm() -> None:
         [
             {
                 "title": "🔥尼卡\u200b魯夫✨",
-                "link": "https://shop.example/item",
                 "snippet": "售價 NT$８４０★",
             }
         ],

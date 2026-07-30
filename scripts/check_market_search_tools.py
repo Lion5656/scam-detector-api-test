@@ -197,18 +197,16 @@ def diagnose_tool(
 
     for index, result in enumerate(results, start=1):
         title = str(result.get("title", "")).strip() or "(無標題)"
-        link = str(result.get("link", "")).strip() or "(無連結)"
         snippet = str(result.get("snippet", "")).strip().replace("\n", " ")
         preview = snippet
         if len(preview) > preview_characters:
             preview = f"{preview[:preview_characters]}..."
         logger.info(
-            "搜尋結果 工具=%s 序號=%d 標題=%r 連結=%s "
+            "搜尋結果 工具=%s 序號=%d 標題=%r "
             "摘要字元=%d 摘要預覽=%r",
             label,
             index,
             title,
-            link,
             len(snippet),
             preview,
         )

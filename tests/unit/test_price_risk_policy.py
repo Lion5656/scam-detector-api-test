@@ -278,14 +278,14 @@ def test_custom_policy_changes_supported_market_price_boundary():
         )
 
     within_range = extract_prices_from_search_results(
-        [{"title": "商品 全新", "link": "https://a.example/1", "snippet": "售價 NT$500"}],
+        [{"title": "商品 全新", "snippet": "售價 NT$500"}],
         MarketplaceCondition.NEW,
         product_query="商品",
         policy=policy,
         extractor=extractor_for(500),
     )
     out_of_range = extract_prices_from_search_results(
-        [{"title": "商品 全新", "link": "https://b.example/1", "snippet": "售價 NT$501"}],
+        [{"title": "商品 全新", "snippet": "售價 NT$501"}],
         MarketplaceCondition.NEW,
         product_query="商品",
         policy=policy,

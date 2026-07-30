@@ -74,12 +74,10 @@ def main() -> int:
     print(f"成功：Tavily API 已回應，共取得 {len(results)} 筆結果。")
     for index, result in enumerate(results, start=1):
         title = str(result.get("title", "")).strip() or "(無標題)"
-        link = str(result.get("link", "")).strip() or "(無連結)"
         snippet = str(result.get("snippet", "")).strip().replace("\n", " ")
         if len(snippet) > 160:
             snippet = f"{snippet[:157]}..."
         print(f"{index}. {title}")
-        print(f"   {link}")
         if snippet:
             print(f"   {snippet}")
 

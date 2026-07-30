@@ -1,11 +1,14 @@
 """使用一次結構化 LLM 呼叫整理搜尋結果中的同商品價格。"""
 
+import hashlib
 import json
 import logging
 import re
 import unicodedata
 from typing import Any
 
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.utils.function_calling import convert_to_json_schema
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.config import settings
@@ -15,9 +18,6 @@ from backend.services.image_price_service.domain.models import \
     MarketplaceCondition
 from backend.services.image_price_service.domain.policy import (
     DEFAULT_PRICE_RISK_POLICY, PriceRiskPolicy)
-from backend.services.image_price_service.pricing.url_utils import \
-    normalize_url
-
 logger = logging.getLogger(__name__)
 
 _ZERO_WIDTH_CHARACTERS = frozenset(
@@ -29,6 +29,11 @@ _ZERO_WIDTH_CHARACTERS = frozenset(
     }
 )
 _ALLOWED_SYMBOLS = frozenset({"$", "+", "×", "=", "~"})
+_MAX_RESULTS_FOR_LLM = 10
+_MAX_LLM_TEXT_CHARS = 4_000
+_MAX_TITLE_CHARS = 160
+_MAX_SNIPPET_CHARS = 800
+_MAX_COMPLETION_TOKENS = 4_096
 
 _SYSTEM_PROMPT = """
 你是台灣購物搜尋結果的商品價格整理器。請一次分析所有輸入結果，擷取其中明確的
@@ -89,6 +94,19 @@ class SearchPriceExtraction(BaseModel):
     candidates: list[ExtractedSearchPrice] = Field(default_factory=list)
 
 
+def _strict_response_format() -> dict[str, Any]:
+    """strict mode JSON Schema response format。"""
+    schema = convert_to_json_schema(SearchPriceExtraction, strict=True)
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": schema.pop("title", "SearchPriceExtraction"),
+            "strict": True,
+            "schema": schema,
+        },
+    }
+
+
 class SearchResultPriceExtractor:
     """延遲建立 Groq client，並以一次 structured-output 呼叫整理價格。"""
 
@@ -114,12 +132,14 @@ class SearchResultPriceExtractor:
         llm = groq_provider.create(
             model=self._model_name,
             temperature=0,
-            reasoning_effort="medium", # 根據不同模型調整
             api_key=self._api_key,
         )
-        self._structured_llm = llm.with_structured_output(
-            SearchPriceExtraction,
-            method="json_mode",
+        self._structured_llm = (
+            llm.bind(
+                response_format=_strict_response_format(),
+                max_completion_tokens=_MAX_COMPLETION_TOKENS,
+            )
+            | PydanticOutputParser(pydantic_object=SearchPriceExtraction)
         )
         return self._structured_llm
 
@@ -137,14 +157,7 @@ class SearchResultPriceExtractor:
             return []
 
         payload = {
-            "results": [
-                {
-                    "result_index": index,
-                    "title": result["title"],
-                    "snippet": result["snippet"],
-                }
-                for index, result in enumerate(normalized_results)
-            ],
+            "results": _prepare_llm_results(normalized_results),
         }
         response = self._get_structured_llm().invoke(
             [
@@ -175,22 +188,45 @@ def _normalize_search_results(
             continue
         title = str(result.get("title", "")).strip()
         snippet = str(result.get("snippet", "")).strip()
-        link = str(result.get("link", "")).strip()
-
         title = _sanitize_llm_text(title)
         snippet = _sanitize_llm_text(snippet)
-        normalized_url = normalize_url(link)
-        if not normalized_url or not (title or snippet):
+        if not (title or snippet):
             continue
         normalized.append(
             {
                 "title": title,
                 "snippet": snippet,
-                "link": link,
-                "normalized_url": normalized_url,
             }
         )
     return normalized
+
+
+def _prepare_llm_results(
+    search_results: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """限制送入的結果數量與文字量"""
+    selected = search_results[:_MAX_RESULTS_FOR_LLM]
+    if not selected:
+        return []
+
+    per_result_budget = _MAX_LLM_TEXT_CHARS // len(selected)
+    prepared: list[dict[str, str]] = []
+    for result in selected:
+        title = result["title"][: min(_MAX_TITLE_CHARS, per_result_budget)]
+        snippet_budget = min(
+            _MAX_SNIPPET_CHARS,
+            max(0, per_result_budget - len(title)),
+        )
+        snippet = result["snippet"][:snippet_budget]
+        if not title and not snippet:
+            continue
+        prepared.append(
+            {
+                "title": title,
+                "snippet": snippet,
+            }
+        )
+    return prepared
 
 
 def _sanitize_llm_text(text: str) -> str:
@@ -258,16 +294,18 @@ def _validate_candidates(
         if evidence not in source_text:
             continue
 
+        source_id = hashlib.sha256(
+            f"{source['title']}\0{source['snippet']}".encode("utf-8")
+        ).hexdigest()[:16]
         candidates.append(
             MarketPriceCandidateEvidence(
                 candidate_id=(
-                    f"{source['normalized_url']}#{extracted.price}"
+                    f"{source_id}#{extracted.price}"
                     f"#{extracted.condition.value}#{candidate_index}"
                 ),
                 title=source["title"],
                 price=extracted.price,
                 condition=extracted.condition,
-                url=source["link"],
                 evidence=evidence,
             )
         )

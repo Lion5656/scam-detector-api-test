@@ -73,7 +73,6 @@ def _estimate(
                 title="候選商品",
                 price=value,
                 condition=condition,
-                url="https://example.com/product",
                 evidence=f"售價 {value}",
             ),
         ),

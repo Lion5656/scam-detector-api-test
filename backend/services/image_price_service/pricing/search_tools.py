@@ -56,12 +56,14 @@ def search_serpapi(
     results = [
         {
             "title": str(item.get("title", "")).strip(),
-            "link": str(item.get("link", "")).strip(),
             "snippet": str(item.get("snippet", "")).strip(),
         }
         for item in organic_results[:max_results]
         if isinstance(item, dict)
-        if str(item.get("link", "")).strip()
+        if (
+            str(item.get("title", "")).strip()
+            or str(item.get("snippet", "")).strip()
+        )
     ]
     return results
 
@@ -80,6 +82,7 @@ def search_ddgs(
                 query,
                 region="tw-tzh",
                 safesearch="off",
+                backend="duckduckgo, brave, google, bing, yahoo",
                 max_results=max_results,
             )
         )
@@ -87,18 +90,20 @@ def search_ddgs(
     results = [
         {
             "title": str(item.get("title", "")).strip(),
-            "link": str(item.get("href", "")).strip(),
             "snippet": str(item.get("body", "")).strip(),
         }
         for item in raw_results
-        if str(item.get("href", "")).strip()
+        if (
+            str(item.get("title", "")).strip()
+            or str(item.get("body", "")).strip()
+        )
     ]
     return results
 
 
 def search_tavily(
     query: str,
-    max_results: int = 10,
+    max_results: int = 10
 ) -> list[dict[str, str]]:
     """透過 Tavily 搜尋並回傳標準化結果。"""
     api_key = settings.TAVILY_SEARCH_API_KEY.get_secret_value() or os.getenv(
@@ -120,11 +125,14 @@ def search_tavily(
     results = [
         {
             "title": str(item.get("title", "")).strip(),
-            "link": str(item.get("url", "")).strip(),
             "snippet": str(item.get("content", "")).strip(),
         }
         for item in response.get("results", [])
-        if str(item.get("url", "")).strip()
+        if isinstance(item, dict)
+        if (
+            str(item.get("title", "")).strip()
+            or str(item.get("content", "")).strip()
+        )
     ]
     return results
 

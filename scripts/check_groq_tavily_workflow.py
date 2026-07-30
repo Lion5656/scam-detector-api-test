@@ -81,8 +81,7 @@ def main() -> int:
     for index, candidate in enumerate(candidates, start=1):
         print(
             f"{index}. price={candidate.price} "
-            f"condition={candidate.condition.value} "
-            f"url={candidate.url}"
+            f"condition={candidate.condition.value}"
         )
     return 0
 

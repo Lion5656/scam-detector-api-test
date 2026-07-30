@@ -4,7 +4,6 @@ import json
 import logging
 import time
 from typing import Any, Literal, cast
-from urllib.parse import urlsplit
 
 from backend.config import settings
 from backend.services.dto.price_analysis import (MarketPriceCandidateEvidence,
@@ -147,7 +146,7 @@ class OnlineMarketPriceService:
             except Exception as error:
                 tool_label = self._SEARCH_TOOL_LABELS.get(tool_name, tool_name)
                 logger.error(
-                    "價格搜尋失敗 工具=%s 錯誤=%s",
+                    "搜尋結果價格擷取失敗 搜尋工具=%s 錯誤=%s",
                     tool_label,
                     str(error),
                 )
@@ -410,9 +409,9 @@ class OnlineMarketPriceService:
     ) -> int:
         return len(
             {
-                urlsplit(candidate.url).netloc.casefold()
+                candidate.candidate_id.rsplit("#", 3)[0]
                 for candidate in candidates
-                if urlsplit(candidate.url).netloc
+                if candidate.candidate_id
             }
         )
 

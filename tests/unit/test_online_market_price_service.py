@@ -1,3 +1,4 @@
+import hashlib
 import json
 from typing import Any
 
@@ -35,7 +36,6 @@ def _disable_search_fallback_delay(monkeypatch) -> None:
 
 def _search_result(
     *,
-    url: str,
     product: str,
     price: int,
     condition_text: str,
@@ -48,7 +48,6 @@ def _search_result(
     )
     return {
         "title": f"{product} {condition_text}".strip(),
-        "link": url,
         "snippet": f"{snippet_prefix} NT${price:,}",
         "_product": product,
         "_price": price,
@@ -61,15 +60,16 @@ def _evidence_candidate(
     index: int,
     *,
     condition: MarketplaceCondition = MarketplaceCondition.NEW,
-    site: str | None = None,
+    source: str | None = None,
 ) -> MarketPriceCandidateEvidence:
-    host = site or f"shop-{index}.example"
+    source_id = source or f"source-{index}"
     return MarketPriceCandidateEvidence(
-        candidate_id=f"candidate-{index}",
+        candidate_id=(
+            f"{source_id}#{price}#{condition.value}#{index}"
+        ),
         title=f"Apple iPhone 15 256GB {condition.value}",
         price=price,
         condition=condition,
-        url=f"https://{host}/items/{index}",
         evidence=f"售價 NT${price:,}",
     )
 
@@ -122,11 +122,18 @@ class _FakePriceExtractor:
                 continue
             candidates.append(
                 MarketPriceCandidateEvidence(
-                    candidate_id=f"llm-{index}-{price}",
+                    candidate_id=(
+                        hashlib.sha256(
+                            (
+                                f"{result['title']}\0"
+                                f"{result['snippet']}"
+                            ).encode("utf-8")
+                        ).hexdigest()[:16]
+                        + f"#{price}#{item_condition.value}#{index}"
+                    ),
                     title=result["title"],
                     price=price,
                     condition=item_condition,
-                    url=result["link"],
                     evidence=result["snippet"],
                 )
             )
@@ -213,7 +220,7 @@ def test_serpapi_search_tool_is_called_directly(monkeypatch) -> None:
         }
     ]
     assert len(result) == 2
-    assert set(result[0]) == {"title", "link", "snippet"}
+    assert set(result[0]) == {"title", "snippet"}
 
 
 def test_tavily_search_tool_calls_api_and_normalizes_results(
@@ -281,16 +288,18 @@ def test_tavily_search_tool_calls_api_and_normalizes_results(
     assert result == [
         {
             "title": "Apple iPhone 15 128GB 全新",
-            "link": "https://shop.example/iphone",
             "snippet": "全新售價 NT$21,890",
-        }
+        },
+        {
+            "title": "缺少網址的結果",
+            "snippet": "NT$20,000",
+        },
     ]
 
 
 def test_known_new_condition_only_accepts_new_prices() -> None:
     results = [
         _search_result(
-            url=f"https://shop-{index}.example/item",
             product="Apple iPhone 15 256GB",
             price=price,
             condition_text=condition_text,
@@ -326,7 +335,6 @@ def test_known_new_condition_only_accepts_new_prices() -> None:
 def test_service_filters_results_for_other_products() -> None:
     results = [
         _search_result(
-            url=f"https://shop-{index}.example/item",
             product=product,
             price=price,
             condition_text="全新",
@@ -355,7 +363,6 @@ def test_service_filters_results_for_other_products() -> None:
 def test_known_used_condition_uses_simple_keyword_and_accepts_used_prices() -> None:
     results = [
         _search_result(
-            url=f"https://used-{index}.example/item",
             product="Sony PS5",
             price=price,
             condition_text=condition_text,
@@ -395,7 +402,6 @@ def test_known_used_condition_uses_simple_keyword_and_accepts_used_prices() -> N
 def test_unknown_condition_uses_one_combined_search_and_splits_estimates() -> None:
     new_results = [
         _search_result(
-            url=f"https://new-{index}.example/item",
             product="Apple iPhone 15 256GB",
             price=30_000 + index * 500,
             condition_text="全新",
@@ -404,7 +410,6 @@ def test_unknown_condition_uses_one_combined_search_and_splits_estimates() -> No
     ]
     used_results = [
         _search_result(
-            url=f"https://used-{index}.example/item",
             product="Apple iPhone 15 256GB",
             price=20_000 + index * 500,
             condition_text="二手",
@@ -436,7 +441,6 @@ def test_out_of_range_candidate_is_removed() -> None:
     """超出 policy 上限的價格和零價格被排除。"""
     results = [
         _search_result(
-            url=f"https://shop-{index}.example/item",
             product="Apple iPhone 15 256GB",
             price=price,
             condition_text="全新",
@@ -482,7 +486,7 @@ def test_independent_source_count_is_checked_by_injected_policy() -> None:
         policy=_policy(minimum_market_sites=2)
     )
     candidates = [
-        _evidence_candidate(30_000 + index * 500, index, site="same.example")
+        _evidence_candidate(30_000 + index * 500, index, source="same-source")
         for index in range(3)
     ]
 
@@ -618,7 +622,6 @@ def test_fallback_searches_accumulate_candidates_until_policy_is_met(
     )
     results = [
         _search_result(
-            url=f"https://shop-{index}.example/item",
             product="Apple iPhone 15 256GB",
             price=30_000 + index * 1_000,
             condition_text="全新",
@@ -657,7 +660,6 @@ def test_duplicate_candidates_across_search_tools_are_preserved(
         SecretStr("tavily-test-key"),
     )
     duplicate = _search_result(
-        url="https://same-shop.example/item",
         product="Apple iPhone 15 256GB",
         price=30_000,
         condition_text="全新",
@@ -693,7 +695,6 @@ def test_search_tool_error_continues_to_next_tool() -> None:
 
     results = [
         _search_result(
-            url=f"https://shop-{index}.example/item",
             product="Apple iPhone 15 256GB",
             price=30_000 + index * 1_000,
             condition_text="全新",

@@ -100,7 +100,6 @@ def test_market_price_estimate_preserves_interval_and_evidence():
         title="iPhone 15 128GB 二手",
         price=20_000,
         condition=MarketplaceCondition.USED,
-        url="https://example.com/item/1",
         evidence="售價 NT$20,000",
     )
     estimate = MarketPriceEstimate(

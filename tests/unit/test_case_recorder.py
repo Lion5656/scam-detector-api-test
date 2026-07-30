@@ -49,7 +49,6 @@ def _result() -> ImagePriceAnalysisResult:
                         title="Apple iPhone 15",
                         price=31_234,
                         condition=MarketplaceCondition.USED,
-                        url="https://example.com/iphone",
                         evidence="二手售價 31,234",
                     ),
                 ),

@@ -28,12 +28,10 @@ def test_diagnose_tool_reports_result_size_without_real_api():
         [
             {
                 "title": "商品 A",
-                "link": "https://example.com/a",
                 "snippet": "售價 NT$10,000",
             },
             {
                 "title": "商品 B",
-                "link": "https://example.com/b",
                 "snippet": "二手近全新",
             },
         ]

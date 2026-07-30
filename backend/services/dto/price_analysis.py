@@ -27,7 +27,6 @@ class MarketPriceCandidateEvidence(BaseModel):
     title: str
     price: int = Field(gt=0)
     condition: MarketplaceCondition
-    url: str
     evidence: str
 
 
