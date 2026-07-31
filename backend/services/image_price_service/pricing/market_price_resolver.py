@@ -1,4 +1,4 @@
-"""解析結構化市場價格，並完整保留未知品況的雙區間結果。"""
+"""解析結構化市場價格。"""
 
 from typing import Any
 
@@ -16,7 +16,7 @@ def resolve_market_price(
     condition: MarketplaceCondition = MarketplaceCondition.NEW,
     condition_text: str = "",
 ) -> tuple[MarketPriceEstimate, ...]:
-    """取得市場估計；UNKNOWN 保留 NEW、USED 兩個獨立結果。"""
+    """取得市場估計。"""
     if settings.ONLINE_PRICE_ENABLED:
         query = (
             search_query

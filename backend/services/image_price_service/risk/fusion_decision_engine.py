@@ -286,9 +286,7 @@ class FusionDecisionEngine:
             and 0 < estimate.low_price <= maximum
             and 0 < estimate.median_price <= maximum
             and 0 < estimate.high_price <= maximum
-            and estimate.low_price
-            <= estimate.median_price
-            <= estimate.high_price
+            and estimate.low_price <= estimate.median_price <= estimate.high_price
         )
 
     def _rule_result_for_estimate(
@@ -347,117 +345,26 @@ class FusionDecisionEngine:
         condition: MarketplaceCondition,
         market_estimates: tuple[MarketPriceEstimate, ...],
     ) -> dict[str, Any]:
-        if condition != MarketplaceCondition.UNKNOWN:
-            if len(market_estimates) != 1:
-                return self._decision_error(
-                    "MARKET_PRICE_INSUFFICIENT",
-                    "已知商品狀態必須且只能取得一個相同狀態的有效市場結果",
-                    condition=condition,
-                )
-            estimate = market_estimates[0]
-            if (
-                estimate.condition != condition
-                or not self._is_valid_market_estimate(estimate)
-            ):
-                return self._market_estimate_error(
-                    market_estimates,
-                    condition,
-                )
-            result = self._rule_result_for_estimate(
-                selling_price,
-                estimate,
-            )
-            return result
-
-        if len(market_estimates) != 2:
+        if len(market_estimates) != 1:
             return self._decision_error(
-                "MARKET_PRICE_DUAL_PATH_INSUFFICIENT",
-                "商品狀態未知時必須同時取得全新與二手市場結果",
+                "MARKET_PRICE_INSUFFICIENT",
+                "商品狀態必須且只能取得一個相同狀態的有效市場結果",
                 condition=condition,
             )
-        by_condition = {
-            estimate.condition: estimate
-            for estimate in market_estimates
-            if self._is_valid_market_estimate(estimate)
-        }
-        if set(by_condition) != {
-            MarketplaceCondition.NEW,
-            MarketplaceCondition.USED,
-        }:
+        estimate = market_estimates[0]
+        if (
+            estimate.condition != condition
+            or not self._is_valid_market_estimate(estimate)
+            or (
+                condition is MarketplaceCondition.UNKNOWN
+                and estimate.sample_count <= self.policy.minimum_market_samples
+            )
+        ):
             return self._market_estimate_error(
                 market_estimates,
                 condition,
             )
-
-        new_result = self._rule_result_for_estimate(
-            selling_price,
-            by_condition[MarketplaceCondition.NEW],
-        )
-        used_result = self._rule_result_for_estimate(
-            selling_price,
-            by_condition[MarketplaceCondition.USED],
-        )
-        path_results = (new_result, used_result)
-        labels = {
-            str(result["risk_label"])
-            for result in path_results
-        }
-        if "LOW" in labels:
-            merged_label: RiskLabel = "LOW"
-        elif labels == {"HIGH"}:
-            merged_label = "HIGH"
-        else:
-            merged_label = "MEDIUM"
-
-        matching_results = [
-            result
-            for result in path_results
-            if result["risk_label"] == merged_label
-        ]
-        merged_score = min(
-            float(result["risk_score"])
-            for result in matching_results
-        )
-        sources = {
-            result["market_price_source"]
-            for result in path_results
-        }
-        market_source: MarketPriceSource = (
-            next(iter(sources))
-            if len(sources) == 1
-            else "not_evaluated"
-        )
-        return {
-            "risk_label": merged_label,
-            "risk_score": merged_score,
-            "reason": (
-                "商品狀態未知，已分別比較全新與二手市場區間，"
-                f"依保守規則採用 {merged_label}；"
-                f"全新：{new_result['reason']}；"
-                f"二手：{used_result['reason']}"
-            ),
-            "evidence": [
-                *[
-                    str(item)
-                    for result in path_results
-                    for item in result["evidence"]
-                ],
-            ],
-            "confidence": min(
-                float(result["confidence"])
-                for result in path_results
-            ),
-            "market_price_source": market_source,
-            "reference_mode": (
-                "iqr"
-                if all(
-                    result["reference_mode"] == "iqr"
-                    for result in path_results
-                )
-                else "median_low_sample"
-            ),
-            "condition": MarketplaceCondition.UNKNOWN,
-        }
+        return self._rule_result_for_estimate(selling_price, estimate)
 
     def _market_estimate_error(
         self,

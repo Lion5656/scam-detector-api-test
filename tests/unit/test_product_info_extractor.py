@@ -159,3 +159,13 @@ def test_product_identifier_builds_query_for_local_market_match() -> None:
     assert result.search_query == "Sony WH-1000XM5 無線降噪耳機 價格"
     assert result.market_price == 9990
     assert info_extractor.calls == []
+
+
+def test_product_identifier_excludes_unknown_model_from_search_query() -> None:
+    query = ProductIdentifier._build_price_search_query(
+        "伊萊克斯無線吸塵器",
+        "伊萊克斯 未知型號",
+        [],
+    )
+
+    assert query == "伊萊克斯無線吸塵器 價格"

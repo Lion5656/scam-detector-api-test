@@ -274,12 +274,7 @@ def _validate_candidates(
     for candidate_index, extracted in enumerate(extraction.candidates):
         if extracted.result_index >= len(search_results):
             continue
-        if (
-            condition is not MarketplaceCondition.UNKNOWN
-            and extracted.condition is not condition
-        ):
-            continue
-        if extracted.condition is MarketplaceCondition.UNKNOWN:
+        if (condition is not MarketplaceCondition.UNKNOWN and extracted.condition is not condition):
             continue
         if extracted.price > policy.maximum_supported_price:
             continue

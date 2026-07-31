@@ -73,6 +73,24 @@ def _used_estimate(
     )
 
 
+def _unknown_estimate(
+    *,
+    low: int = 15_000,
+    median: int = 22_500,
+    high: int = 30_000,
+    sample_count: int = 6,
+    **overrides,
+) -> MarketPriceEstimate:
+    return _estimate(
+        MarketplaceCondition.UNKNOWN,
+        low=low,
+        median=median,
+        high=high,
+        sample_count=sample_count,
+        **overrides,
+    )
+
+
 def _evaluate(engine: FusionDecisionEngine, **overrides):
     values = {
         "product_name": "Apple iPhone 15 256GB",
@@ -121,15 +139,14 @@ def test_evaluate_integration_unknown_condition_without_reviewable_evidence():
         condition_source_text="",
         condition_extraction_confidence=0.0,
         text="",
-        market_estimates=(_new_estimate(), _used_estimate()),
+        market_estimates=(_unknown_estimate(),),
     )
 
     assert result["risk_label"] == "LOW"
     assert result["condition"] is MarketplaceCondition.UNKNOWN
     assert result["decision_layer"] == "fast"
     assert reviewer_calls == []
-    assert "全新：" in result["reason"]
-    assert "二手：" in result["reason"]
+    assert "15000～30000" in result["reason"]
 
 
 def test_evaluate_integration_deep_review_confirms_known_condition():
@@ -208,7 +225,7 @@ def test_evaluate_integration_deep_review_corrects_unknown_condition():
         condition_detail="",
         condition_source_text="商品狀況：二手・良好",
         condition_extraction_confidence=0.0,
-        market_estimates=(_new_estimate(), _used_estimate()),
+        market_estimates=(_unknown_estimate(),),
         reprice=reprice,
     )
 
@@ -239,7 +256,7 @@ def test_success_result_explains_interval_gaps_and_condition():
     assert any("new 市場區間" in item for item in result["evidence"])
 
 
-def test_unknown_dual_result_explains_both_condition_paths():
+def test_unknown_result_explains_combined_market_interval():
     result = _evaluate(
         FusionDecisionEngine(),
         selling_price=18_000,
@@ -247,16 +264,13 @@ def test_unknown_dual_result_explains_both_condition_paths():
         condition_detail="",
         condition_source_text="",
         condition_extraction_confidence=0.0,
-        market_estimates=(_new_estimate(), _used_estimate()),
+        market_estimates=(_unknown_estimate(),),
     )
 
     assert result["risk_label"] == "LOW"
-    assert "全新：" in result["reason"]
-    assert "二手：" in result["reason"]
     assert "相對差距" in result["reason"]
     assert "絕對差額" in result["reason"]
-    assert any("new 市場區間" in item for item in result["evidence"])
-    assert any("used 市場區間" in item for item in result["evidence"])
+    assert any("unknown 市場區間" in item for item in result["evidence"])
 
 
 def test_underprice_gap_uses_violated_low_boundary_not_median():
@@ -465,11 +479,11 @@ def test_small_sample_price_score_uses_policy_cap():
     assert result["risk_label"] == "MEDIUM"
 
 
-def test_unknown_condition_any_normal_path_is_low():
+def test_unknown_condition_combined_interval_is_low():
     result = _evaluate(
         FusionDecisionEngine(),
         selling_price=18_000,
-        market_estimates=(_new_estimate(), _used_estimate()),
+        market_estimates=(_unknown_estimate(),),
         condition=MarketplaceCondition.UNKNOWN,
         condition_detail="",
         condition_source_text="",
@@ -480,11 +494,11 @@ def test_unknown_condition_any_normal_path_is_low():
     assert result["decision_layer"] == "fast"
 
 
-def test_unknown_condition_requires_both_paths_high_to_return_high():
+def test_unknown_condition_combined_interval_can_return_high():
     result = _evaluate(
         FusionDecisionEngine(),
         selling_price=5_000,
-        market_estimates=(_new_estimate(), _used_estimate()),
+        market_estimates=(_unknown_estimate(),),
         condition=MarketplaceCondition.UNKNOWN,
         condition_detail="",
         condition_source_text="",
@@ -495,18 +509,37 @@ def test_unknown_condition_requires_both_paths_high_to_return_high():
     assert result["decision_layer"] == "fast"
 
 
-def test_unknown_condition_single_success_is_decision_error():
-    insufficient_used = _used_estimate(
-        status="insufficient",
-        confidence=0.4,
-        sample_count=2,
+def test_unknown_condition_uses_combined_sample_count():
+    combined_estimate = _unknown_estimate(
+        confidence=0.8,
+        sample_count=4,
         site_count=2,
     )
 
     result = _evaluate(
         FusionDecisionEngine(),
         selling_price=18_000,
-        market_estimates=(_new_estimate(), insufficient_used),
+        market_estimates=(combined_estimate,),
+        condition=MarketplaceCondition.UNKNOWN,
+        condition_detail="",
+        condition_source_text="",
+    )
+
+    assert result["risk_label"] == "LOW"
+    assert result["decision_layer"] == "fast"
+
+
+def test_unknown_condition_requires_more_than_three_combined_samples():
+    combined_estimate = _unknown_estimate(
+        confidence=0.6,
+        sample_count=3,
+        site_count=2,
+    )
+
+    result = _evaluate(
+        FusionDecisionEngine(),
+        selling_price=18_000,
+        market_estimates=(combined_estimate,),
         condition=MarketplaceCondition.UNKNOWN,
         condition_detail="",
         condition_source_text="",
@@ -591,7 +624,7 @@ def test_medium_or_high_with_reviewable_condition_evidence_calls_llm(
         condition_reviewer=lambda context: calls.append(context)
     )
     estimates = (
-        (_new_estimate(), _used_estimate())
+        (_unknown_estimate(),)
         if condition == MarketplaceCondition.UNKNOWN
         else (_new_estimate(),)
     )
@@ -642,7 +675,7 @@ def test_condition_review_can_use_listing_text_and_detail_together():
         condition_source_text="",
         condition_extraction_confidence=0.0,
         text="商品說明：二手・近全新，功能正常",
-        market_estimates=(_new_estimate(), _used_estimate()),
+        market_estimates=(_unknown_estimate(),),
         reprice=lambda *_: (_used_estimate(),),
     )
 
@@ -652,7 +685,7 @@ def test_condition_review_can_use_listing_text_and_detail_together():
     assert contexts[0]["condition_detail"] == "近全新"
 
 
-def test_missing_condition_source_never_calls_llm_and_keeps_dual_result():
+def test_missing_condition_source_never_calls_llm_and_keeps_combined_result():
     calls: list[dict[str, object]] = []
     engine = FusionDecisionEngine(
         condition_reviewer=lambda context: calls.append(context)
@@ -661,14 +694,14 @@ def test_missing_condition_source_never_calls_llm_and_keeps_dual_result():
     result = _evaluate(
         engine,
         selling_price=10_000,
-        market_estimates=(_new_estimate(), _used_estimate()),
+        market_estimates=(_unknown_estimate(),),
         condition=MarketplaceCondition.UNKNOWN,
         condition_detail="",
         condition_source_text=" ",
         condition_extraction_confidence=0.0,
     )
 
-    assert result["risk_label"] == "HIGH"
+    assert result["risk_label"] == "MEDIUM"
     assert result["decision_layer"] == "fast"
     assert calls == []
 
@@ -812,7 +845,7 @@ def test_llm_same_condition_and_detail_does_not_reprice():
     assert result["risk_score"] == 70.0
 
 
-def test_unknown_reviewed_as_unknown_keeps_original_dual_result_without_reprice():
+def test_unknown_reviewed_as_unknown_keeps_combined_result_without_reprice():
     review = DeepAnalysisReview(
         reviewed_condition=MarketplaceCondition.UNKNOWN,
         condition_detail="",
@@ -825,7 +858,7 @@ def test_unknown_reviewed_as_unknown_keeps_original_dual_result_without_reprice(
     result = _evaluate(
         engine,
         selling_price=10_000,
-        market_estimates=(_new_estimate(), _used_estimate()),
+        market_estimates=(_unknown_estimate(),),
         condition=MarketplaceCondition.UNKNOWN,
         condition_detail="",
         condition_source_text="品況無法確認",
@@ -833,11 +866,11 @@ def test_unknown_reviewed_as_unknown_keeps_original_dual_result_without_reprice(
         reprice=lambda *_: pytest.fail("UNKNOWN 未變更不得重新查價"),
     )
 
-    assert result["risk_label"] == "HIGH"
+    assert result["risk_label"] == "MEDIUM"
     assert result["decision_layer"] == "llm"
 
 
-def test_accepted_change_to_unknown_reprices_dual_paths_only_once():
+def test_accepted_change_to_unknown_reprices_combined_market_once():
     review = DeepAnalysisReview(
         reviewed_condition=MarketplaceCondition.UNKNOWN,
         condition_detail="",
@@ -850,7 +883,7 @@ def test_accepted_change_to_unknown_reprices_dual_paths_only_once():
 
     def reprice(condition, detail):
         calls.append((condition, detail))
-        return (_new_estimate(), _used_estimate())
+        return (_unknown_estimate(),)
 
     result = _evaluate(
         engine,

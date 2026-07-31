@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     MAX_IMAGE_BYTES : int = 20 * 1024 * 1024  # 20MB
     MARKET_PRICE_DB_PATH: str = str(ROOT_DIR / "data" / "market_prices_tw.json")
     ONLINE_PRICE_ENABLED: bool = True
-    ONLINE_PRICE_MAX_RESULTS: int = 10
+    ONLINE_PRICE_MAX_RESULTS: int = 20
     SEARCH_DOMAIN: list[str] = ["biggo.com.tw", "momo.com.tw", "pchome.com.tw", "shopee.tw", "ruten.com.tw", "tw.carousell.com"]
     EXCLUDE_DOMAIN: list[str] = ["zh.wikipedia.org"]
     ONLINE_PRICE_FALLBACK_DELAY_SECONDS: float = 2.0

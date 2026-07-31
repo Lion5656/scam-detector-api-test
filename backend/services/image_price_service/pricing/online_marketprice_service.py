@@ -1,7 +1,7 @@
 """定義價格查詢、候選驗證與台灣市場價格統計。"""
 
-import json
 import logging
+import re
 import time
 from typing import Any, Literal, cast
 
@@ -20,6 +20,22 @@ from backend.services.image_price_service.pricing.search_tools import (
     FALLBACK_SEARCH_TOOLS, PRIMARY_SEARCH_TOOL, SEARCH_FUNCTIONS)
 
 logger = logging.getLogger(__name__)
+
+_PRICE_RE = re.compile(
+    r"(?:NT\$|TWD\s*|\$\s*|(?:售價|特價|價格|優惠價)\s*[:：]?\s*)"
+    r"(?P<prefix>\d[\d,]{1,8})"
+    r"|(?P<suffix>\d[\d,]{1,8})\s*元",
+    flags=re.IGNORECASE,
+)
+_PRICE_RANGE_RE = re.compile(
+    r"(?:NT\$|TWD\s*|\$\s*)?\d[\d,]*\s*"
+    r"(?:-|~|～|至|到)\s*"
+    r"(?:NT\$|TWD\s*|\$\s*)?\d[\d,]*",
+    flags=re.IGNORECASE,
+)
+_NON_SALE_TERMS = ("月付", "分期", "折價", "折扣", "運費", "定金")
+_NEW_TERMS = ("全新", "新品", "未拆", "未使用")
+_USED_TERMS = ("二手", "中古", "拆封", "拆擺", "展示品", "使用過")
 
 
 class OnlineMarketPriceService:
@@ -53,17 +69,19 @@ class OnlineMarketPriceService:
         condition: MarketplaceCondition = MarketplaceCondition.NEW,
         condition_text: str = "",
     ) -> tuple[MarketPriceEstimate, ...]:
-        """一次搜尋後，依品況建立一個或兩個獨立市場價格區間。"""
+        """一次搜尋後建立市場價格區間。"""
         if condition is MarketplaceCondition.UNKNOWN:
             candidates, search_tools = self._collect_candidates(
                 product_query,
                 max_results,
                 condition=condition,
             )
-            return self._aggregate_target_candidates(
-                candidates,
-                condition,
-                search_tools=search_tools,
+            return (
+                self._aggregate_candidates(
+                    candidates,
+                    condition,
+                    search_tools=search_tools,
+                ),
             )
         return (
             self.estimate_price(
@@ -84,7 +102,7 @@ class OnlineMarketPriceService:
     ) -> MarketPriceEstimate:
         """回傳單一已知品況的結構化市場價格估計。"""
         if condition is MarketplaceCondition.UNKNOWN:
-            raise ValueError("UNKNOWN 必須使用 estimate_prices() 執行雙區間估價")
+            raise ValueError("UNKNOWN 必須使用 estimate_prices() 執行合併估價")
 
         candidates, search_tools = self._collect_candidates(
             product_query,
@@ -104,26 +122,22 @@ class OnlineMarketPriceService:
         *,
         condition: MarketplaceCondition,
     ) -> tuple[list[MarketPriceCandidateEvidence], list[SearchTool]]:
-        """以單一簡化 query 搜尋，並累積所有通過驗證的候選。"""
+        """逐一累積搜尋結果，最後以一次 LLM 呼叫整理候選價格。"""
         query = product_query.strip()
         if not query or max_results <= 0:
             return [], []
 
         condition_term = self._condition_search_term(condition)
         conditioned_query = self._append_condition_term(query, condition_term)
-        candidates: list[MarketPriceCandidateEvidence] = []
+        search_results: list[dict[str, Any]] = []
         search_tools: list[SearchTool] = []
+        preflight_target = (
+            self.policy.minimum_market_samples
+            * self.policy.preflight_multiplier
+        )
 
         tools = (PRIMARY_SEARCH_TOOL, *FALLBACK_SEARCH_TOOLS)
         for index, tool_name in enumerate(tools):
-            if (
-                tool_name == "tavily"
-                and not settings.TAVILY_SEARCH_API_KEY.get_secret_value()
-            ):
-                logger.warning(
-                    "價格搜尋已略過 工具=tavily 原因=缺少 API 金鑰"
-                )
-                continue
             if self._search_functions.get(tool_name) is None:
                 logger.warning("找不到搜尋工具：%s", tool_name)
                 continue
@@ -135,73 +149,65 @@ class OnlineMarketPriceService:
                 self._SEARCH_TOOL_LABELS.get(tool_name, tool_name),
             )
             search_tools.append(tool_label)
-            try:
-                new_candidates = self._search_and_extract_prices(
-                    query=conditioned_query,
-                    product_query=query,
-                    max_results=max_results,
-                    tool_name=tool_name,
-                    condition=condition,
+            search_results.extend(
+                self._fetch_results(
+                    conditioned_query,
+                    max_results,
+                    tool_name,
                 )
-            except Exception as error:
-                tool_label = self._SEARCH_TOOL_LABELS.get(tool_name, tool_name)
-                logger.error(
-                    "搜尋結果價格擷取失敗 搜尋工具=%s 錯誤=%s",
-                    tool_label,
-                    str(error),
-                )
-                continue
-
-            candidates.extend(new_candidates)
-            estimates = self._aggregate_target_candidates(
-                candidates,
-                condition,
-                search_tools=search_tools,
             )
-            if all(
-                estimate.status == "success"
-                for estimate in estimates
-            ):
-                return candidates, search_tools
+            preflight_count = sum(
+                self._is_price_result(result, condition)
+                for result in search_results
+            )
+            logger.info(
+                "價格搜尋預檢 工具=%s 合格數=%d 門檻=%d",
+                tool_label,
+                preflight_count,
+                preflight_target,
+            )
+            if preflight_count >= preflight_target:
+                break
 
+        if not search_results:
+            return [], search_tools
+
+        prioritized_results = [
+            result
+            for result in search_results
+            if self._is_price_result(result, condition)
+        ]
+        prioritized_results.extend(
+            result
+            for result in search_results
+            if not self._is_price_result(result, condition)
+        )
+        try:
+            candidates = extract_prices_from_search_results(
+                prioritized_results,
+                condition,
+                product_query=query,
+                policy=self.policy,
+                extractor=self._price_extractor,
+            )
+        except Exception as error:
+            logger.error(
+                "搜尋結果價格擷取失敗 搜尋工具=%s 錯誤=%s",
+                ",".join(search_tools),
+                str(error),
+            )
+            return [], search_tools
+
+        logger.info("搜尋結果價格擷取完成 搜尋結果數=%d 候選數=%d", len(search_results), len(candidates))
         return candidates, search_tools
 
-    def _aggregate_target_candidates(
+    def _fetch_results(
         self,
-        candidates: list[MarketPriceCandidateEvidence],
-        condition: MarketplaceCondition,
-        *,
-        search_tools: list[SearchTool] | None = None,
-    ) -> tuple[MarketPriceEstimate, ...]:
-        """UNKNOWN 固定拆成 NEW、USED 兩個區間，但不重複搜尋。"""
-        target_conditions = (
-            (MarketplaceCondition.NEW, MarketplaceCondition.USED)
-            if condition is MarketplaceCondition.UNKNOWN
-            else (condition,)
-        )
-        return tuple(
-            self._aggregate_candidates(
-                [
-                    candidate
-                    for candidate in candidates
-                    if candidate.condition is target_condition
-                ],
-                target_condition,
-                search_tools=search_tools,
-            )
-            for target_condition in target_conditions
-        )
-
-    def _search_and_extract_prices(
-        self,
-        *,
         query: str,
-        product_query: str,
         max_results: int,
         tool_name: str,
-        condition: MarketplaceCondition,
-    ) -> list[MarketPriceCandidateEvidence]:
-        """執行單一搜尋工具並以一次 LLM 呼叫整理候選價格。"""
+    ) -> list[dict[str, Any]]:
+        """執行單一搜尋工具並回傳可供後續預檢的結果。"""
         tool_label = self._SEARCH_TOOL_LABELS.get(tool_name, tool_name)
         logger.info("價格搜尋開始 工具=%s", tool_label)
 
@@ -223,16 +229,51 @@ class OnlineMarketPriceService:
         if not isinstance(search_results, list):
             return []
 
-        candidates = extract_prices_from_search_results(
-            search_results,
-            condition,
-            product_query=product_query,
-            policy=self.policy,
-            extractor=self._price_extractor,
-        )
+        results = [
+            result
+            for result in search_results
+            if isinstance(result, dict)
+        ]
+        logger.info("價格搜尋完成 工具=%s 結果數=%d", tool_label, len(results))
+        return results
 
-        logger.info("價格搜尋完成 工具=%s 候選數=%d", tool_label, len(candidates))
-        return candidates
+    def _is_price_result(
+        self,
+        result: dict[str, Any],
+        condition: MarketplaceCondition,
+    ) -> bool:
+        """判斷搜尋結果是否可能含有目標品況的一次性商品售價。"""
+        text = " ".join(
+            str(result.get(field, "")).strip()
+            for field in ("title", "snippet")
+        )
+        if not text.strip():
+            return False
+
+        has_used_term = any(term in text for term in _USED_TERMS)
+        if condition is MarketplaceCondition.NEW:
+            if has_used_term or not any(term in text for term in _NEW_TERMS):
+                return False
+        elif (
+            condition is MarketplaceCondition.USED
+            and not has_used_term
+        ):
+            return False
+
+        for match in _PRICE_RE.finditer(text):
+            start = max(0, match.start() - 16)
+            end = min(len(text), match.end() + 16)
+            context = text[start:end]
+            if any(term in context for term in _NON_SALE_TERMS):
+                continue
+            if _PRICE_RANGE_RE.search(context):
+                continue
+
+            raw_price = match.group("prefix") or match.group("suffix")
+            price = int(raw_price.replace(",", ""))
+            if 0 < price <= self.policy.maximum_supported_price:
+                return True
+        return False
 
     def _aggregate_candidates(
         self,
@@ -251,8 +292,11 @@ class OnlineMarketPriceService:
         sample_count = len(candidates)
         site_count = self._site_count(candidates)
         confidence = self._market_confidence(sample_count, site_count)
+        required_samples = self.policy.minimum_market_samples
+        if condition is MarketplaceCondition.UNKNOWN:
+            required_samples += 1
         if (
-            sample_count < self.policy.minimum_market_samples
+            sample_count < required_samples
             or site_count < self.policy.minimum_market_sites
             or confidence < self.policy.minimum_market_confidence
         ):
@@ -289,7 +333,7 @@ class OnlineMarketPriceService:
             retained_site_count,
         )
         if (
-            retained_sample_count < self.policy.minimum_market_samples
+            retained_sample_count < required_samples
             or retained_site_count < self.policy.minimum_market_sites
             or retained_confidence < self.policy.minimum_market_confidence
         ):

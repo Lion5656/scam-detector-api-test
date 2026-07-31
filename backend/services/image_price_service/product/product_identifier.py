@@ -159,11 +159,18 @@ class ProductIdentifier:
             "未知型號",
             "未知品牌型號",
         }
+        unknown_model_markers = ("未知型號", "未知品牌型號")
         normalized_name = " ".join(str(product_name).split())
         normalized_model = " ".join(str(brand_model).split())
 
         name_is_known = normalized_name not in unknown_values
-        model_is_known = normalized_model not in unknown_values
+        model_is_known = (
+            normalized_model not in unknown_values
+            and not any(
+                marker in normalized_model
+                for marker in unknown_model_markers
+            )
+        )
 
         if name_is_known and model_is_known:
             if normalized_model.casefold() in normalized_name.casefold():

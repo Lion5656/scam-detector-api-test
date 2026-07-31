@@ -82,17 +82,14 @@ def test_market_price_resolver_returns_structured_online_result(monkeypatch):
     ]
 
 
-def test_market_price_resolver_preserves_unknown_dual_results_without_average(
+def test_market_price_resolver_preserves_combined_unknown_result(
     monkeypatch,
 ):
     monkeypatch.setattr(
         "backend.services.image_price_service.pricing.market_price_resolver.settings.ONLINE_PRICE_ENABLED",
         True,
     )
-    expected = (
-        _estimate(MarketplaceCondition.NEW, 30_000),
-        _estimate(MarketplaceCondition.USED, 20_000),
-    )
+    expected = (_estimate(MarketplaceCondition.UNKNOWN, 25_000),)
     service = _FakeOnlinePriceService(expected)
 
     result = resolve_market_price(
@@ -105,7 +102,7 @@ def test_market_price_resolver_preserves_unknown_dual_results_without_average(
     )
 
     assert result is expected
-    assert [estimate.median_price for estimate in result] == [30_000, 20_000]
+    assert result[0].median_price == 25_000
     assert service.calls[0]["condition"] is MarketplaceCondition.UNKNOWN
 
 

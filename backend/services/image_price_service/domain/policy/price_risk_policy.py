@@ -22,6 +22,7 @@ class PriceRiskPolicy(BaseModel):
     minimum_market_samples: int = Field(ge=3)
     minimum_market_sites: int = Field(ge=1)
     minimum_iqr_samples: int = Field(ge=5)
+    preflight_multiplier: int = Field(default=2, ge=1)
     small_sample_relative_tolerance: float = Field(gt=0.0, lt=1.0)
     small_sample_score_cap: int = Field(ge=0, le=100)
     llm_review_min_confidence: float = Field(ge=0.0, le=1.0)
@@ -116,18 +117,18 @@ class PriceRiskPolicy(BaseModel):
 
 DEFAULT_PRICE_RISK_POLICY = PriceRiskPolicy(
     underprice_relative_bands=(
-        (0.10, 20),
-        (0.20, 35),
-        (0.35, 55),
-        (0.50, 75),
-        (float("inf"), 95),
+        (0.10, 10),
+        (0.20, 25),
+        (0.35, 45),
+        (0.50, 65),
+        (float("inf"), 75),
     ),
     overprice_relative_bands=(
-        (0.15, 20),
-        (0.30, 35),
-        (0.60, 55),
-        (1.00, 70),
-        (float("inf"), 95),
+        (0.15, 10),
+        (0.30, 25),
+        (0.60, 45),
+        (1.00, 65),
+        (float("inf"), 75),
     ),
     absolute_gap_bands=(
         (499, 5),
@@ -145,6 +146,7 @@ DEFAULT_PRICE_RISK_POLICY = PriceRiskPolicy(
     minimum_market_samples=3,
     minimum_market_sites=1,
     minimum_iqr_samples=5,
+    preflight_multiplier=2,
     small_sample_relative_tolerance=0.25,
     small_sample_score_cap=79,
     llm_review_min_confidence=0.80,

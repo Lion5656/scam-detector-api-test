@@ -98,6 +98,9 @@ def _make_fake_search_fn(results: list[dict]) -> Any:
 class _FakePriceExtractor:
     """線上市價服務測試用的已結構化 LLM 替身。"""
 
+    def __init__(self) -> None:
+        self.calls: list[list[dict]] = []
+
     def extract(
         self,
         search_results,
@@ -106,6 +109,7 @@ class _FakePriceExtractor:
         product_query,
         policy,
     ):
+        self.calls.append(list(search_results))
         target_product = product_query.removesuffix("價格").strip().casefold()
         candidates = []
         for index, result in enumerate(search_results):
@@ -221,6 +225,46 @@ def test_serpapi_search_tool_is_called_directly(monkeypatch) -> None:
     ]
     assert len(result) == 2
     assert set(result[0]) == {"title", "snippet"}
+
+
+def test_serpapi_search_tool_fetches_two_pages(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    class FakeSerpApiClient:
+        def __init__(self, *, api_key: str, timeout: int) -> None:
+            assert api_key == "serp-test-key"
+            assert timeout == 60
+
+        def search(self, params: dict) -> dict:
+            calls.append(params)
+            start = int(params.get("start", 0))
+            return {
+                "organic_results": [
+                    {
+                        "title": f"商品 {position}",
+                        "snippet": f"售價 NT${position:,}",
+                    }
+                    for position in range(start + 1, start + 11)
+                ]
+            }
+
+    monkeypatch.setattr(
+        search_tools.settings,
+        "SERP_API_KEY",
+        SecretStr("serp-test-key"),
+    )
+    monkeypatch.setattr(
+        search_tools.serpapi,
+        "Client",
+        FakeSerpApiClient,
+    )
+
+    result = search_tools.search_serpapi("目標商品 價格", 20)
+
+    assert [call.get("start", 0) for call in calls] == [0, 10]
+    assert len(result) == 20
+    assert result[0]["title"] == "商品 1"
+    assert result[-1]["title"] == "商品 20"
 
 
 def test_tavily_search_tool_calls_api_and_normalizes_results(
@@ -399,22 +443,22 @@ def test_known_used_condition_uses_simple_keyword_and_accepts_used_prices() -> N
     assert fakes["serpapi"].calls[0]["query"] == "Sony PS5 價格 二手"
 
 
-def test_unknown_condition_uses_one_combined_search_and_splits_estimates() -> None:
+def test_unknown_condition_combines_all_candidates_without_deduplication() -> None:
     new_results = [
         _search_result(
             product="Apple iPhone 15 256GB",
-            price=30_000 + index * 500,
+            price=price,
             condition_text="全新",
         )
-        for index in range(1, 4)
+        for price in (30_000, 30_000, 31_000)
     ]
     used_results = [
         _search_result(
             product="Apple iPhone 15 256GB",
-            price=20_000 + index * 500,
+            price=price,
             condition_text="二手",
         )
-        for index in range(1, 4)
+        for price in (20_000, 20_000, 21_000)
     ]
     service, fakes = _make_service_with_fake_search(
         {"serpapi": [*new_results, *used_results]}
@@ -425,16 +469,68 @@ def test_unknown_condition_uses_one_combined_search_and_splits_estimates() -> No
         condition=MarketplaceCondition.UNKNOWN,
     )
 
-    assert tuple(estimate.condition for estimate in estimates) == (
-        MarketplaceCondition.NEW,
-        MarketplaceCondition.USED,
-    )
-    assert all(estimate.status == "success" for estimate in estimates)
+    assert len(estimates) == 1
+    estimate = estimates[0]
+    assert estimate.condition is MarketplaceCondition.UNKNOWN
+    assert estimate.status == "success"
+    assert estimate.reference_mode == "iqr"
+    assert estimate.sample_count == 6
+    assert estimate.low_price == 20_250
+    assert estimate.median_price == 25_500
+    assert estimate.high_price == 30_000
+    assert [candidate.price for candidate in estimate.candidates] == [
+        30_000,
+        30_000,
+        31_000,
+        20_000,
+        20_000,
+        21_000,
+    ]
     assert len(fakes["serpapi"].calls) == 1
+    assert len(service._price_extractor.calls) == 1
     assert (
         fakes["serpapi"].calls[0]["query"]
         == "Apple iPhone 15 256GB 價格 全新 二手"
     )
+
+
+def test_unknown_preflight_uses_six_total_without_condition_quota(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        online_marketprice_service.settings,
+        "TAVILY_SEARCH_API_KEY",
+        SecretStr("tavily-test-key"),
+    )
+    new_results = [
+        _search_result(
+            product="Apple iPhone 15 256GB",
+            price=30_000 + index * 100,
+            condition_text="全新",
+        )
+        for index in range(6)
+    ]
+    service, fakes = _make_service_with_fake_search(
+        {
+            "serpapi": new_results,
+            "tavily": new_results,
+            "ddgs": new_results,
+        }
+    )
+
+    estimates = service.estimate_prices(
+        "Apple iPhone 15 256GB 價格",
+        condition=MarketplaceCondition.UNKNOWN,
+    )
+
+    assert len(estimates) == 1
+    assert estimates[0].status == "success"
+    assert estimates[0].condition is MarketplaceCondition.UNKNOWN
+    assert estimates[0].sample_count == 6
+    assert len(fakes["serpapi"].calls) == 1
+    assert fakes["tavily"].calls == []
+    assert fakes["ddgs"].calls == []
+    assert len(service._price_extractor.calls) == 1
 
 
 def test_out_of_range_candidate_is_removed() -> None:
@@ -538,6 +634,41 @@ def test_three_or_four_samples_use_median_without_iqr(
     assert estimate.high_price == round(expected_median * 1.25)
     assert 0.25 not in percentile_calls
     assert 0.75 not in percentile_calls
+
+
+@pytest.mark.parametrize(
+    ("prices", "expected_status"),
+    [
+        ([20_000, 20_000, 30_000], "insufficient"),
+        ([20_000, 20_000, 30_000, 30_000], "success"),
+    ],
+)
+def test_unknown_requires_more_than_three_merged_samples(
+    prices,
+    expected_status,
+) -> None:
+    service = OnlineMarketPriceService()
+    candidates = [
+        _evidence_candidate(
+            price,
+            index,
+            condition=(
+                MarketplaceCondition.NEW
+                if index % 2
+                else MarketplaceCondition.USED
+            ),
+        )
+        for index, price in enumerate(prices, start=1)
+    ]
+
+    estimate = service._aggregate_candidates(
+        candidates,
+        MarketplaceCondition.UNKNOWN,
+    )
+
+    assert estimate.status == expected_status
+    assert estimate.sample_count == len(prices)
+    assert [candidate.price for candidate in estimate.candidates] == prices
 
 
 def test_five_or_more_samples_use_linear_percentiles_and_iqr() -> None:
@@ -649,6 +780,81 @@ def test_fallback_searches_accumulate_candidates_until_policy_is_met(
     assert len(fakes["serpapi"].calls) == 1
     assert len(fakes["ddgs"].calls) == 1
     assert len(fakes["tavily"].calls) == 1
+    assert len(service._price_extractor.calls) == 1
+
+
+def test_primary_preflight_target_skips_all_fallbacks(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        online_marketprice_service.settings,
+        "TAVILY_SEARCH_API_KEY",
+        SecretStr("tavily-test-key"),
+    )
+    results = [
+        _search_result(
+            product="Apple iPhone 15 256GB",
+            price=30_000 + index * 100,
+            condition_text="全新",
+        )
+        for index in range(6)
+    ]
+    service, fakes = _make_service_with_fake_search(
+        {
+            "serpapi": results,
+            "tavily": results,
+            "ddgs": results,
+        }
+    )
+
+    estimate = service.estimate_price(
+        "Apple iPhone 15 256GB 價格",
+        condition=MarketplaceCondition.NEW,
+    )
+
+    assert estimate.status == "success"
+    assert estimate.search_tools == ["serp_api"]
+    assert len(fakes["serpapi"].calls) == 1
+    assert fakes["tavily"].calls == []
+    assert fakes["ddgs"].calls == []
+    assert len(service._price_extractor.calls) == 1
+
+
+def test_first_fallback_reaching_preflight_target_skips_ddgs(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        online_marketprice_service.settings,
+        "TAVILY_SEARCH_API_KEY",
+        SecretStr("tavily-test-key"),
+    )
+    results = [
+        _search_result(
+            product="Apple iPhone 15 256GB",
+            price=30_000 + index * 100,
+            condition_text="全新",
+        )
+        for index in range(6)
+    ]
+    service, fakes = _make_service_with_fake_search(
+        {
+            "serpapi": results[:3],
+            "tavily": results[3:],
+            "ddgs": results,
+        }
+    )
+
+    estimate = service.estimate_price(
+        "Apple iPhone 15 256GB 價格",
+        condition=MarketplaceCondition.NEW,
+    )
+
+    assert estimate.status == "success"
+    assert estimate.search_tools == ["serp_api", "tavily"]
+    assert len(fakes["serpapi"].calls) == 1
+    assert len(fakes["tavily"].calls) == 1
+    assert fakes["ddgs"].calls == []
+    assert len(service._price_extractor.calls) == 1
 
 
 def test_duplicate_candidates_across_search_tools_are_preserved(
@@ -685,6 +891,8 @@ def test_duplicate_candidates_across_search_tools_are_preserved(
     ]
     assert estimate.site_count == 1
     assert estimate.search_tools == ["serp_api", "tavily"]
+    assert len(service._price_extractor.calls) == 1
+    assert len(service._price_extractor.calls[0]) == 3
 
 
 def test_search_tool_error_continues_to_next_tool() -> None:
@@ -733,3 +941,39 @@ def test_no_results_returns_not_found() -> None:
 
     assert estimate.status == "not_found"
     assert estimate.median_price == 0
+    assert service._price_extractor.calls == []
+
+
+@pytest.mark.parametrize(
+    ("title", "snippet", "condition", "expected"),
+    [
+        ("目標商品 全新", "售價 NT$20,000", MarketplaceCondition.NEW, True),
+        ("目標商品 二手", "售價 18,000 元", MarketplaceCondition.USED, True),
+        ("目標商品 二手", "售價 NT$18,000", MarketplaceCondition.NEW, False),
+        ("目標商品 全新", "月付 NT$999", MarketplaceCondition.NEW, False),
+        (
+            "目標商品 全新",
+            "價格 NT$10,000～NT$20,000",
+            MarketplaceCondition.NEW,
+            False,
+        ),
+        (
+            "目標商品",
+            "售價 NT$20,000",
+            MarketplaceCondition.UNKNOWN,
+            True,
+        ),
+    ],
+)
+def test_price_result_preflight(
+    title,
+    snippet,
+    condition,
+    expected,
+) -> None:
+    service = OnlineMarketPriceService()
+
+    assert service._is_price_result(
+        {"title": title, "snippet": snippet},
+        condition,
+    ) is expected

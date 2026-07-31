@@ -56,6 +56,8 @@ def _estimate(
             source="online",
             confidence=0.0,
         )
+    sample_count = 4 if condition is MarketplaceCondition.UNKNOWN else 3
+    confidence = 0.8 if condition is MarketplaceCondition.UNKNOWN else 0.6
     return MarketPriceEstimate(
         status="success",
         condition=condition,
@@ -63,10 +65,10 @@ def _estimate(
         median_price=value,
         low_price=round(value * 0.75),
         high_price=round(value * 1.25),
-        sample_count=3,
+        sample_count=sample_count,
         site_count=3,
         source="online",
-        confidence=0.6,
+        confidence=confidence,
         candidates=(
             MarketPriceCandidateEvidence(
                 candidate_id=f"{condition.value}-1",
@@ -123,17 +125,11 @@ class _FakeOnlinePriceService:
                 "condition_text": condition_text,
             }
         )
-        conditions = (
-            (MarketplaceCondition.NEW, MarketplaceCondition.USED)
-            if condition is MarketplaceCondition.UNKNOWN
-            else (condition,)
-        )
-        return tuple(
+        return (
             _estimate(
-                item,
-                self.values_by_condition.get(item, self.value),
-            )
-            for item in conditions
+                condition,
+                self.values_by_condition.get(condition, self.value),
+            ),
         )
 
 
@@ -343,7 +339,7 @@ def test_detector_delegates_insufficient_market_data_to_decision_engine(
     assert result.decision_layer == "decision_error"
 
 
-def test_unknown_condition_keeps_dual_paths_without_averaging(monkeypatch):
+def test_unknown_condition_keeps_combined_market_estimate(monkeypatch):
     monkeypatch.setattr(
         "backend.services.image_price_service.case_recorder.settings.CASE_MEMORY_ENABLED",
         False,
@@ -354,16 +350,15 @@ def test_unknown_condition_keeps_dual_paths_without_averaging(monkeypatch):
         market_price=0,
         decision_engine=FusionDecisionEngine(),
         values_by_condition={
-            MarketplaceCondition.NEW: 35_000,
-            MarketplaceCondition.USED: 22_000,
+            MarketplaceCondition.UNKNOWN: 25_000,
         },
     )
 
     result = analyzer.image_price_detector(b"image")
 
     assert service.calls[0]["condition"] is MarketplaceCondition.UNKNOWN
-    assert len(result.market_price_estimates) == 2
-    assert result.market_price == 0
+    assert len(result.market_price_estimates) == 1
+    assert result.market_price == 25_000
     assert result.market_price_source == "online"
     assert result.condition is MarketplaceCondition.UNKNOWN
     assert result.risk_label == "LOW"

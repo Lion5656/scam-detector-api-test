@@ -27,31 +27,39 @@ def search_serpapi(
 
     logger.info("SerpApi 搜尋 query=%r max_results=%d", query, max_results)
     client = serpapi.Client(api_key=api_key, timeout=60)
-    response = client.search(
-        {
+    organic_results: list[dict[str, Any]] = []
+    for start in range(0, max_results, 10):
+        search_params: dict[str, Any] = {
             "engine": "google_light",
             "q": query,
             "google_domain": "google.com.tw",
             "hl": "zh-tw",
             "gl": "tw",
         }
-    )
-    if isinstance(response, str):
-        response_data = json.loads(response)
-    elif isinstance(response, dict):
-        response_data = response
-    elif hasattr(response, "as_dict"):
-        response_data = response.as_dict()
-    else:
-        response_data = dict(response)
-    if not isinstance(response_data, dict):
-        raise TypeError("SerpApi 回傳格式不是 JSON 物件")
-    if response_data.get("error"):
-        raise RuntimeError(str(response_data["error"]))
+        if start:
+            search_params["start"] = start
+        response = client.search(search_params)
+        if isinstance(response, str):
+            response_data = json.loads(response)
+        elif isinstance(response, dict):
+            response_data = response
+        elif hasattr(response, "as_dict"):
+            response_data = response.as_dict()
+        else:
+            response_data = dict(response)
+        if not isinstance(response_data, dict):
+            raise TypeError("SerpApi 回傳格式不是 JSON 物件")
+        if response_data.get("error"):
+            raise RuntimeError(str(response_data["error"]))
 
-    organic_results = response_data.get("organic_results", [])
-    if not isinstance(organic_results, list):
-        return []
+        page_results = response_data.get("organic_results", [])
+        if not isinstance(page_results, list):
+            return []
+        organic_results.extend(
+            item for item in page_results if isinstance(item, dict)
+        )
+        if not page_results:
+            break
 
     results = [
         {
