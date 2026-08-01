@@ -1,6 +1,6 @@
 from typing import Any, cast
 
-from backend.config import settings
+from backend.core.config import settings
 from backend.rag.rag_reasoner import analyze_with_rag
 from backend.services.dto.text_analysis import BaseEvidence
 from backend.services.text_service.base_classifier import base_classifier

@@ -5,7 +5,7 @@ import re
 import time
 from typing import Any, Literal, cast
 
-from backend.config import settings
+from backend.core.config import settings
 from backend.services.dto.price_analysis import (MarketPriceCandidateEvidence,
                                                  MarketPriceEstimate,
                                                  SearchTool)

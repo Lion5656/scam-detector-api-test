@@ -3,7 +3,7 @@ from typing import Dict
 import joblib
 from huggingface_hub import hf_hub_download
 
-from backend.config import settings
+from backend.core.config import settings
 from backend.utils import features
 
 
@@ -32,8 +32,8 @@ class Detector():
         prob = float(self.classifier.predict_proba(feat)[0][1])
         score = f"{prob:.2f}"
         if prob >= settings.URL_THRESHOLD:
-            return {"label": "詐騙", "score": score, "description": "此鏈結具有風險特徵，請不要點擊前往!"}
+            return {"label": "HIGH", "score": score, "reason": "此鏈結具有風險特徵，請不要點擊前往!"}
         else:
-            return {"label": "安全", "score": score, "description":  "目前尚未發現鏈結風險，仍需留意陌生鏈結"}
+            return {"label": "LOW", "score": score, "reason":  "目前尚未發現鏈結風險，仍需留意陌生鏈結"}
 
 detector = Detector()

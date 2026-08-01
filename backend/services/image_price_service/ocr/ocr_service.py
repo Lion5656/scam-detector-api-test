@@ -8,8 +8,9 @@ from typing import Any, cast
 
 from google.oauth2 import service_account
 
-from backend.config import settings
-from backend.services.image_price_service.domain.models import OCRDocument, OCRTextBlock
+from backend.core.config import settings
+from backend.services.image_price_service.domain.models import (OCRDocument,
+                                                                OCRTextBlock)
 
 
 class OCRService:

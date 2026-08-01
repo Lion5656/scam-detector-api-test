@@ -11,13 +11,14 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.utils.function_calling import convert_to_json_schema
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.config import settings
+from backend.core.config import settings
 from backend.providers import groq_provider
 from backend.services.dto.price_analysis import MarketPriceCandidateEvidence
 from backend.services.image_price_service.domain.models import \
     MarketplaceCondition
 from backend.services.image_price_service.domain.policy import (
     DEFAULT_PRICE_RISK_POLICY, PriceRiskPolicy)
+
 logger = logging.getLogger(__name__)
 
 _ZERO_WIDTH_CHARACTERS = frozenset(

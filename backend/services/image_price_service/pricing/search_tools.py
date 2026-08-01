@@ -8,7 +8,7 @@ from typing import Any
 import serpapi
 from tavily import TavilyClient
 
-from backend.config import settings
+from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 

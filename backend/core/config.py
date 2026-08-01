@@ -4,8 +4,9 @@ from pathlib import Path
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BASE_DIR = Path(__file__).resolve().parent
-ROOT_DIR = BASE_DIR.parent
+CORE_DIR = Path(__file__).resolve().parent
+BACKEND_DIR = CORE_DIR.parent
+ROOT_DIR = BACKEND_DIR.parent
 
 
 class Settings(BaseSettings):
@@ -27,7 +28,7 @@ class Settings(BaseSettings):
     URL_THRESHOLD: float = 0.46
 
     DEVICE: str = "cpu"
-    BASE_MODEL_PATH: str = str(BASE_DIR / "models")
+    BASE_MODEL_PATH: str = str(BACKEND_DIR / "models")
 
     CHUNCK_SIZE: int = 500
     CHUNCK_OVERLAP: int = 50
@@ -75,7 +76,8 @@ class Settings(BaseSettings):
 
     GROQ_API_KEY: SecretStr = SecretStr("")
     model_config = SettingsConfigDict(
-        env_file=[os.path.join(BASE_DIR, ".env"), os.path.join(ROOT_DIR, ".env")],
+        env_file=[os.path.join(BACKEND_DIR, ".env"), 
+                  os.path.join(ROOT_DIR, ".env")],
         extra="ignore",
     )
     

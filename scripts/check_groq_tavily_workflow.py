@@ -10,14 +10,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.config import settings
-from backend.services.image_price_service.domain.models import MarketplaceCondition
-from backend.services.image_price_service.pricing.search_result_price_extractor import (
-    extract_prices_from_search_results,
-)
-from backend.services.image_price_service.pricing.search_tools import (
-    search_tavily,
-)
+from backend.core.config import settings
+from backend.services.image_price_service.domain.models import \
+    MarketplaceCondition
+from backend.services.image_price_service.pricing.search_result_price_extractor import \
+    extract_prices_from_search_results
+from backend.services.image_price_service.pricing.search_tools import \
+    search_tavily
 
 
 def configure_console_encoding() -> None:

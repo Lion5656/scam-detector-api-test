@@ -3,7 +3,7 @@
 import logging
 from typing import Any, cast
 
-from backend.config import settings
+from backend.core.config import settings
 from backend.repository.case_repository import case_repository
 from backend.services.dto.price_analysis import (ImagePriceAnalysisResult,
                                                  MarketPriceEstimate,

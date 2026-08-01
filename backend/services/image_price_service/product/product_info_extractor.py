@@ -6,8 +6,9 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from backend.config import settings
+from backend.core.config import settings
 from backend.providers import groq_provider
+
 
 class ProductInfoExtractor:
     """協調 LLM 結構化輸出，用於商品資訊擷取。"""

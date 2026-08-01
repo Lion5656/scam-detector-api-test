@@ -6,7 +6,7 @@ from typing import TypedDict
 
 from rapidfuzz import fuzz
 
-from backend.config import settings
+from backend.core.config import settings
 
 
 class MarketPriceRecord(TypedDict):

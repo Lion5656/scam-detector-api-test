@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, HttpUrl
 
 
 class UrlRequest(BaseModel):
@@ -7,4 +7,4 @@ class UrlRequest(BaseModel):
 class UrlResponse(BaseModel):
     label: str
     score: str | float | None = None
-    description: str 
+    reason: str 

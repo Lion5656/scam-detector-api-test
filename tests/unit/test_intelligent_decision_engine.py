@@ -2,15 +2,13 @@ import inspect
 
 import pytest
 
-from backend.config import Settings
-from backend.services.dto.price_analysis import (
-    DeepAnalysisReview,
-    MarketPriceEstimate,
-)
-from backend.services.image_price_service.domain.models import MarketplaceCondition
-from backend.services.image_price_service.risk.fusion_decision_engine import (
-    FusionDecisionEngine,
-)
+from backend.core.config import Settings
+from backend.services.dto.price_analysis import (DeepAnalysisReview,
+                                                 MarketPriceEstimate)
+from backend.services.image_price_service.domain.models import \
+    MarketplaceCondition
+from backend.services.image_price_service.risk.fusion_decision_engine import \
+    FusionDecisionEngine
 
 
 def _estimate(

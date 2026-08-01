@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from backend.config import settings
+from backend.core.config import settings
 
 
 class CaseRepository:

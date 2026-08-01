@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from backend.config import settings
+from backend.core.config import settings
 from backend.services.dto.price_analysis import ImagePriceAnalysisResult
 
 logger = logging.getLogger(__name__)

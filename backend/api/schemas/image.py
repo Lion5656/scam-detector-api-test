@@ -1,6 +1,7 @@
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 from backend.services.dto.price_analysis import (
     DecisionLayer,
@@ -39,28 +40,32 @@ class MarketPriceEstimateResponse(BaseModel):
 class ImagePriceDebugInfo(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    error_code: str | None = None
     search_tools: list[SearchTool] = Field(default_factory=list)
     market_price_source: MarketPriceSource = "not_evaluated"
     market_price_estimates: tuple[MarketPriceEstimateResponse, ...] = ()
     condition_source_text: str = ""
     condition_extraction_confidence: float = Field(default=0.0, ge=0, le=1)
     price_source_text: str | None = None
+    extraction_confidence: float | None = Field(default=None, ge=0, le=1)
+    decision_layer: DecisionLayer
     warnings: list[str] = Field(default_factory=list)
 
 
 class ImagePriceResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        alias_generator=to_camel,
+        populate_by_name=True,
+        serialize_by_alias=True,
+    )
 
     product_name: str | None = None
     condition: MarketplaceCondition | None = None
-    condition_detail: str = ""
     listed_price: int | None = Field(default=None, ge=0)
     market_price: int | None = Field(default=None, ge=0)
     seller_name: str | None = None
     risk_label: Literal["LOW", "MEDIUM", "HIGH", "UNKNOWN"]
     risk_score: str | float | None = None
-    decision_layer: DecisionLayer
-    error_code: str | None = None
     result: str | None = None
-    extraction_confidence: float | None = Field(default=None, ge=0, le=1)
     debug: ImagePriceDebugInfo | None = None

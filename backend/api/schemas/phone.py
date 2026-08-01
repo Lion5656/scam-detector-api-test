@@ -1,9 +1,17 @@
 import re
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, ConfigDict
+from pydantic.alias_generators import to_camel
+
 
 
 class PhoneQueryRequest(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        serialize_by_alias=True,
+    )
+    
     phone_number: str = Field(..., min_length=1, max_length=20)
 
     @model_validator(mode="after")
@@ -14,6 +22,12 @@ class PhoneQueryRequest(BaseModel):
 
 
 class PhoneReportRequest(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        serialize_by_alias=True,
+    )
+
     phone_number: str = Field(..., min_length=1, max_length=20)
     phone_type: str = Field(..., min_length=1, max_length=50)
     other_type: str | None = Field(None, max_length=100)
@@ -32,6 +46,12 @@ class PhoneReportRequest(BaseModel):
 
 
 class PhoneQueryResponse(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        serialize_by_alias=True,
+    )
+
     phone_number: str
     status: str | None = None
     phone_type: str | None = None
@@ -40,12 +60,18 @@ class PhoneQueryResponse(BaseModel):
     last_reported_at: str | None = None
     owner_name: str | None = None
     can_report: bool = False
-    report_options: list[str] = Field(default_factory=list)
-
 
 class PhoneReportResponse(BaseModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        serialize_by_alias=True,
+    )
     phone_number: str
     status: str
     total_reports: int
     report_time: str
     message: str
+
+class PhoneReportError(Exception):
+    pass

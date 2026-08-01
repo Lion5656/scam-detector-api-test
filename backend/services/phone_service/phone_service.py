@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
+from backend.api.schemas.phone import PhoneReportError
 from backend.persistence.mysql_connection import engine
 
 
@@ -30,6 +31,8 @@ class PhoneService:
         except OperationalError as exc:
             raise RuntimeError(f"資料庫連線失敗：{exc}") from exc
 
+        
+        can_report = True
         if not result:
             return {
                 "phone_number": phone_number,
@@ -39,16 +42,7 @@ class PhoneService:
                 "first_reported_at": None,
                 "last_reported_at": None,
                 "owner_name": None,
-                "can_report": True,
-                "report_options": [
-                    "個資蒐集",
-                    "詐騙",
-                    "騷擾",
-                    "可疑電話",
-                    "銀行信貸騷擾",
-                    "企業假冒",
-                    "其他",
-                ],
+                "can_report": can_report
             }
 
         first_reported_at = (
@@ -62,6 +56,9 @@ class PhoneService:
             else None
         )
 
+        if result["status"] == "white":
+            can_report = False
+        
         return {
             "phone_number": result["phone_number"],
             "status": result["status"],
@@ -70,16 +67,7 @@ class PhoneService:
             "first_reported_at": first_reported_at,
             "last_reported_at": last_reported_at,
             "owner_name": result["owner_name"],
-            "can_report": False,
-            "report_options": [
-                "個資蒐集",
-                "詐騙",
-                "騷擾",
-                "可疑電話",
-                "銀行信貸騷擾",
-                "企業假冒",
-                "其他",
-            ],
+            "can_report": can_report
         }
 
     def report_suspicious(self, phone_number: str, phone_type: str, other_type: str | None = None) -> dict:
@@ -87,7 +75,6 @@ class PhoneService:
             phone_type = other_type or phone_type
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
         try:
             with engine.begin() as conn:
                 phone_row = conn.execute(
@@ -97,6 +84,9 @@ class PhoneService:
                     {"phone_number": phone_number},
                 ).mappings().first()
 
+                if phone_row and phone_row["status"] == "white":
+                    raise PhoneReportError("該號碼已存在於白名單，無法回報為可疑號碼。")
+                
                 if phone_row:
                     phone_id = phone_row["id"]
                     conn.execute(
@@ -138,12 +128,6 @@ class PhoneService:
                         {"last_reported_at": now, "phone_id": phone_id},
                     )
                     total_reports = blacklist_row["total_reports"] + 1
-                    first_reported_at = conn.execute(
-                        text(
-                            "SELECT first_reported_at FROM blacklist WHERE phone_id = :phone_id"
-                        ),
-                        {"phone_id": phone_id},
-                    ).scalar()
                 else:
                     conn.execute(
                         text(
@@ -157,7 +141,6 @@ class PhoneService:
                         },
                     )
                     total_reports = 1
-                    first_reported_at = now
         except OperationalError as exc:
             raise RuntimeError(f"資料庫連線失敗：{exc}") from exc
 

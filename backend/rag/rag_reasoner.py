@@ -1,15 +1,11 @@
 import json
 from typing import Any
 
-from backend.config import settings
+from backend.core.config import settings
 from backend.providers import groq_provider
 from backend.rag.dto.rag_analysis import RagEvidence, RagResponse
-from backend.rag.rag_retriever import (
-    format_context,
-    get_retriever,
-    is_rag_ready,
-    normalize_query_text,
-)
+from backend.rag.rag_retriever import (format_context, get_retriever,
+                                       is_rag_ready, normalize_query_text)
 from backend.utils.text_cleaner import normalize_escape_sequences
 
 _rag_chain : Any | None = None

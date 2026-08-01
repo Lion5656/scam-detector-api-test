@@ -3,7 +3,7 @@ from typing import Any
 
 from huggingface_hub import snapshot_download
 
-from backend.config import settings
+from backend.core.config import settings
 
 
 class RAGContext:

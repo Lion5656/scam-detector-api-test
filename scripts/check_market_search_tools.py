@@ -69,12 +69,9 @@ def configure_console() -> None:
 
 def load_project_tools() -> tuple[dict[str, SearchTool], dict[str, str]]:
     """延遲載入正式工具，確保 logging 已先完成初始化。"""
-    from backend.config import settings
+    from backend.core.config import settings
     from backend.services.image_price_service.pricing.search_tools import (
-        search_ddgs,
-        search_serpapi,
-        search_tavily,
-    )
+        search_ddgs, search_serpapi, search_tavily)
 
     class _FnAdapter:
         """將純函式包裝成 SearchTool 介面。"""

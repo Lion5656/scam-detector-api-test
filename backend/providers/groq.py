@@ -6,7 +6,7 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import SecretStr
 
-from backend.config import settings
+from backend.core.config import settings
 
 
 class GroqProvider:

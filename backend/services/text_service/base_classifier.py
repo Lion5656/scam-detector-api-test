@@ -1,9 +1,10 @@
 from typing import Any, cast
 
 from optimum.onnxruntime import ORTModelForSequenceClassification
-from transformers import AutoTokenizer, Pipeline, PreTrainedTokenizerBase, pipeline
+from transformers import (AutoTokenizer, Pipeline, PreTrainedTokenizerBase,
+                          pipeline)
 
-from backend.config import settings
+from backend.core.config import settings
 
 
 class BaseClassifier:

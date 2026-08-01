@@ -10,10 +10,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.config import settings
-from backend.services.image_price_service.pricing.search_tools import (
-    search_tavily,
-)
+from backend.core.config import settings
+from backend.services.image_price_service.pricing.search_tools import \
+    search_tavily
 
 
 def parse_args() -> argparse.Namespace:

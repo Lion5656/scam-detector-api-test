@@ -4,30 +4,29 @@
 結果封裝成 ImagePriceResponse；OCR、商品辨識、價格統計與風險決策不在本模組。
 """
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from typing import Annotated
+
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from starlette.concurrency import run_in_threadpool
 
-from backend.config import settings
-from backend.schemas.image import (
-    ImagePriceDebugInfo,
-    ImagePriceResponse,
-    ImageUploadResponse,
-    MarketPriceEstimateResponse,
-)
-from backend.services.image_price_service.image_price_analyzer import (
-    image_price_analyzer,
-)
+from backend.api.response import ApiResponse
+from backend.api.schemas.image import (ImagePriceDebugInfo, ImagePriceResponse,
+                                       ImageUploadResponse,
+                                       MarketPriceEstimateResponse)
+from backend.core.config import settings
+from backend.services.image_price_service.image_price_analyzer import \
+    image_price_analyzer
 
 router = APIRouter(prefix="/v1", tags=["image-inference"])
 
 
 @router.post(
-    "/analyze/image/upload",
-    response_model=ImageUploadResponse,
+    "/image/upload",
+    response_model=ApiResponse[ImageUploadResponse],
     summary="圖片上傳測試",
     description="用於測試圖片上傳是否成功。",
 )
-async def upload_image(file: UploadFile = File(...)) -> ImageUploadResponse:
+async def upload_image(file: UploadFile = File(...)) -> ApiResponse[ImageUploadResponse]:
     """驗證圖片 MIME type、非空內容與大小，回傳上傳資訊但不執行分析。"""
     content_type = file.content_type or ""
     if content_type not in settings.ALLOWED_IMAGE_TYPES:
@@ -43,21 +42,26 @@ async def upload_image(file: UploadFile = File(...)) -> ImageUploadResponse:
     if len(data) > settings.MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="圖片大小不可超過 20MB")
 
-    return ImageUploadResponse(
+    data = ImageUploadResponse(
         filename=file.filename or "unknown",
         content_type=content_type,
         size_bytes=len(data),
         message="圖片已成功上傳，可進入下一步辨識流程",
     )
 
+    return ApiResponse(data=data)
+
 
 @router.post(
-    "/analyze/price",
-    response_model=ImagePriceResponse,
+    "/price/analyze",
+    response_model=ApiResponse[ImagePriceResponse],
     summary="價格驗證風險分析",
-    description="使用 OCR 分析圖片商品價格",
+    description="使用 OCR 分析圖片商品價格。加上 `?debug=true` 可取得 OCR 與市場價格來源的除錯資訊。",
 )
-async def analyze_image_price(file: UploadFile = File(...)) -> ImagePriceResponse:
+async def analyze_image_price(
+    file: UploadFile = File(...),
+    include_debug: Annotated[bool | None, Query(alias="debug")] = None,
+) -> ApiResponse[ImagePriceResponse]:
     """驗證商品圖片 HTTP 輸入並封裝 Service 分析結果。
 
     Router 僅驗證 MIME type、非空內容與大小，呼叫 image_price_detector 後以
@@ -83,43 +87,44 @@ async def analyze_image_price(file: UploadFile = File(...)) -> ImagePriceRespons
         warnings = list(result.extraction_warnings)
         if not result.success and result.message and result.message not in warnings:
             warnings.append(result.message)
-        return ImagePriceResponse(
-            product_name=result.product_name if result.success else None,
-            listed_price=result.listed_price if result.success else None,
-            market_price=( result.market_price if result.success and result.market_price > 0 else None ),
-            seller_name=result.seller_name if result.success else None,
-            risk_label=result.risk_label,
-            condition=result.condition,
-            condition_detail=result.condition_detail,
-            risk_score=result.score,
-            decision_layer=result.decision_layer,
-            error_code=result.error_code,
-            extraction_confidence=result.extraction_confidence if result.success else None,
-            result=result.reason,
-            debug=ImagePriceDebugInfo(
+
+        debug_info = None
+        if include_debug:
+            debug_info = ImagePriceDebugInfo(
+                error_code=result.error_code,
                 search_tools=result.search_tools,
                 market_price_source=result.market_price_source,
                 market_price_estimates=tuple(
                     MarketPriceEstimateResponse(
-                        **estimate.model_dump(
-                            exclude={"candidates", "search_tools"}
-                        )
+                        **estimate.model_dump(exclude={"candidates", "search_tools"})
                     )
                     for estimate in result.market_price_estimates
                 ),
                 condition_source_text=result.condition_source_text,
-                condition_extraction_confidence=(
-                    result.condition_extraction_confidence
-                ),
+                condition_extraction_confidence=result.condition_extraction_confidence,
                 price_source_text=result.price_source_text,
+                extraction_confidence=result.extraction_confidence if result.success else None,
+                decision_layer=result.decision_layer,
                 warnings=warnings,
-            ),
+            )
+
+        data=ImagePriceResponse(
+            product_name=result.product_name if result.success else None,
+            listed_price=result.listed_price if result.success else None,
+            market_price=(result.market_price if result.success and result.market_price > 0 else None),
+            seller_name=result.seller_name if result.success else None,
+            risk_label=result.risk_label,
+            condition=result.condition,
+            risk_score=result.score,
+            result=result.reason,
+            debug=debug_info,
         )
+        
+        return ApiResponse(data=data)
+    
     except HTTPException:
         raise
     except Exception as e:
         if settings.DEBUG:
             raise HTTPException(status_code=500, detail=str(e))
         raise HTTPException(status_code=500, detail="Internal Error")
-    
-    
