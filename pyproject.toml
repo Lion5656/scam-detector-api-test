@@ -31,6 +31,7 @@ dependencies = [
     "pymysql",
     "tavily-python>=0.7.26",
     "serpapi>=1.0.2",
+    "networkx>=3.0",
 ]
 
 [dependency-groups]

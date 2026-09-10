@@ -6,12 +6,20 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.core.config import settings
 
+host_name = settings.DB_HOST.strip()
+port_number = settings.DB_PORT
+if host_name and ":" in host_name and host_name.count(":") == 1:
+    host_candidate, port_candidate = host_name.rsplit(":", 1)
+    if port_candidate.isdigit():
+        host_name = host_candidate
+        port_number = int(port_candidate)
+
 database_url = URL.create(
     drivername="mysql+pymysql",
     username=settings.DB_USERNAME,
     password=settings.DB_PASSWORD,
-    host=settings.DB_HOST,
-    port=settings.DB_PORT,
+    host=host_name,
+    port=port_number,
     database=settings.DB_NAME,
     query={"charset": "utf8mb4"},
 )
