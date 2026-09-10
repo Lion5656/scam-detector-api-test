@@ -68,11 +68,11 @@ class Settings(BaseSettings):
 
     DB_USERNAME: str = ""
     DB_PASSWORD: str = ""
-    DB_HOST: str = ""
-    DB_PORT: int = 10126
+    DB_HOST: str = "127.0.0.1"
+    DB_PORT: int = 3306
     DB_NAME: str = ""
     DB_TIMEOUT: int = 10
-    DB_SSL_CA: str = "ca.pem"
+    DB_SSL_CA: str = ""
 
     GROQ_API_KEY: SecretStr = SecretStr("")
     model_config = SettingsConfigDict(

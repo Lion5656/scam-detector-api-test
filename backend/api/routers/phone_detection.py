@@ -51,16 +51,22 @@ async def query_phone(req: PhoneQueryRequest) -> ApiResponse[PhoneQueryResponse]
                         "standard": {
                             "summary": "回報常見類別",
                             "value": {
-                                "phone_number": "0987654321",
-                                "phone_type": "詐騙"
+                                "phoneNumber": "0987654321",
+                                "phoneType": "假投資",
+                                "reporterPhone": "0912345678",
+                                "transferType": 1,
+                                "transferContent": "0912345678"
                             }
                         },
                         "other": {
                             "summary": "回報其他類別",
                             "value": {
-                                "phone_number": "0987654321",
-                                "phone_type": "其他",
-                                "other_type": "疑似詐騙廣告"
+                                "phoneNumber": "0987654321",
+                                "phoneType": "其他",
+                                "otherType": "疑似詐騙廣告",
+                                "reporterPhone": "0912345678",
+                                "transferType": 3,
+                                "transferContent": "https://example.com/fake"
                             }
                         }
                     }
@@ -71,7 +77,15 @@ async def query_phone(req: PhoneQueryRequest) -> ApiResponse[PhoneQueryResponse]
 )
 async def report_phone(req: PhoneReportRequest) -> ApiResponse[PhoneReportResponse]:
     try:
-        result = phone_service.report_suspicious(req.phone_number, req.phone_type, req.other_type)
+        result = phone_service.report_suspicious(
+            req.phone_number,
+            req.phone_type,
+            req.other_type,
+            None,
+            req.reporter_phone,
+            req.transfer_type,
+            req.transfer_content,
+        )
         data = PhoneReportResponse(**result)
         return ApiResponse(data=data)
     except PhoneReportError as e:
