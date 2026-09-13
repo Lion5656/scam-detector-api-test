@@ -181,7 +181,7 @@ def test_family_repository_loads_related_records():
 
         def execute(self, query, params=None):
             q = str(query)
-            if "LIMIT 1" in q and "FROM fraud_blacklist" in q:
+            if "LIMIT 1" in q and "FROM blacklist" in q:
                 return FakeResult([
                     {
                         "phone_number": "975000001",
@@ -247,7 +247,7 @@ def test_analyze_family_keeps_target_phone_in_db_genealogy(monkeypatch):
 
         def execute(self, query, params=None):
             q = str(query)
-            if "LIMIT 1" in q and "FROM fraud_blacklist" in q:
+            if "LIMIT 1" in q and "FROM blacklist" in q:
                 return FakeResult([
                     {
                         "phone_number": "975000001",

@@ -86,7 +86,7 @@ class FamilyRepository:
                                last_seen_at,
                                referral_type,
                                referral_info
-                        FROM fraud_blacklist
+                        FROM blacklist
                         WHERE phone_number IN (:phone_db, :phone_full)
                         LIMIT 1
                         """
@@ -105,7 +105,7 @@ class FamilyRepository:
                                last_seen_at AS last_reported_at,
                                referral_type AS transfer_type,
                                referral_info AS transfer_content
-                        FROM fraud_blacklist
+                        FROM blacklist
                         WHERE phone_number NOT IN (:phone_db, :phone_full)
                           AND (
                                 referral_info IN (:phone_db, :phone_full)
