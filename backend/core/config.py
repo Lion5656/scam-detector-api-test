@@ -25,7 +25,10 @@ class Settings(BaseSettings):
     MEDIUM_THRESHOLD: float = 0.6
     UNKNOWN_THRESHOLD: float = 0.7
 
-    URL_THRESHOLD: float = 0.46
+    URL_HIGH_THRESHOLD: float = 0.5
+    URL_MEDIUM_THRESHOLD: float = 0.3
+    URL_MODEL_NAME: str = "url_scam_classifier.joblib"
+    URL_TW_RISK_BONUS: float = 0.3
 
     DEVICE: str = "cpu"
     BASE_MODEL_PATH: str = str(BACKEND_DIR / "models")
@@ -33,7 +36,7 @@ class Settings(BaseSettings):
     CHUNCK_SIZE: int = 500
     CHUNCK_OVERLAP: int = 50
 
-    RAG_MODEL_NAME: str = "llama-3.1-8b-instant"
+    RAG_MODEL_NAME: str = "openai/gpt-oss-20b"
     RAG_ENABLED: bool = True
     RAG_TOP_K: int = 3
     RAG_RECORD_LIMIT: int = 2100
@@ -43,7 +46,7 @@ class Settings(BaseSettings):
     
     NORMALIZER_MODEL: str = "openai/gpt-oss-120b"
     PRICE_MODEL: str = "openai/gpt-oss-120b"
-    REVIEW_MODEL: str = "qwen/qwen3.6-27b"
+    REVIEW_MODEL: str = "qwen/qwen3.8-27b"
     TAVILY_SEARCH_API_KEY: SecretStr = SecretStr("")
     SERP_API_KEY: SecretStr = SecretStr("")
     SEARCH_COUNTRY: str = "taiwan"

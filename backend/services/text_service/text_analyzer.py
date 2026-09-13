@@ -49,7 +49,7 @@ class TextAnalyzer:
         }
 
         if model_label == "未知風險" and not rule_hits:
-            response.update({"label": "未知風險", "score": "未知", "reason": "語句缺乏明確資訊，無法進行有效判斷，評估風險為未知"})
+            response.update({"label": "未知風險", "score": 0.0, "reason": "語句缺乏明確資訊，無法進行有效判斷，評估風險為未知"})
             return response
         if model_label == "低風險" and model_confidence >= 0.8 and len(rule_hits) <= 2:
             response.update({"label": "低風險", "score": 10.0, "reason": f"此訊息所含詐騙特徵較少{extra_reason}，評估風險為低。"})
@@ -88,7 +88,7 @@ class TextAnalyzer:
             response.update({"label": "中等風險", "score": final_score, "reason": "此訊息疑似有詐騙風險，但特徵較模糊，評估風險為中等"})
             return response
         if model_eval < 0:
-            response.update({"label": "未知風險", "score": "未知", "reason": "此訊息缺乏明確資訊，無法進行有效判斷，評估風險為未知"})
+            response.update({"label": "未知風險", "score": 0.0, "reason": "此訊息缺乏明確資訊，無法進行有效判斷，評估風險為未知"})
             return response
         response.update({"label": "低風險", "score": final_score, "reason": f"此訊息所含詐騙特徵較少{extra_reason}，評估風險為低。"})
         return response

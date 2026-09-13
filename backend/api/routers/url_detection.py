@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from backend.api.response import ApiResponse
 from backend.api.schemas.url import UrlRequest, UrlResponse
 from backend.core.config import settings
-from backend.services.url_service.url_analyzer import detector
+from backend.services.url_service.url_analyzer import url_detector
 
 router = APIRouter(prefix="/v1", tags=["url-detector"])
 
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/v1", tags=["url-detector"])
 def analyze_url(req: UrlRequest) -> ApiResponse[UrlResponse]:
     try:
         url = str(req.url)
-        result = detector.url_detector(url)
+        result = url_detector.analyze(url)
         data = UrlResponse(**result)
         return ApiResponse(data=data)
     except Exception as e:

@@ -47,7 +47,7 @@ class BaseClassifier:
             device=device,
         )
         self.tokenizer = tokenizer
-        print("模型載入完成")
+        print("文字模型載入完成")
 
     def _evaluate_distribution(self, result: list[dict[str, Any]]) -> tuple[str, float | None, float]:
         """評估模型輸出的分類分佈"""

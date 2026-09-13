@@ -8,7 +8,7 @@ from backend.core.config import settings
 from backend.rag.rag_context import RAGContext
 from backend.rag.rag_retriever import is_rag_ready
 from backend.services.text_service.base_classifier import base_classifier
-from backend.services.url_service.url_analyzer import detector
+from backend.services.url_service.url_analyzer import url_detector
 
 
 @asynccontextmanager
@@ -17,7 +17,7 @@ async def lifespan(app: FastAPI):
     
     
     base_classifier.load_model()  # 載入 Base 模型
-    detector.load_model()
+    url_detector.load_model()
 
     print("初始化 RAG")
     # 設置 RAG Context
