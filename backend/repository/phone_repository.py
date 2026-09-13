@@ -30,8 +30,8 @@ class PhoneRepository:
                    b.dominant_tag AS phone_type,
                    w.org_name AS owner_name
             FROM phone p
-            LEFT JOIN fraud_blacklist b ON p.phone_number = b.phone_number
-            LEFT JOIN white_list w ON p.phone_number = w.phone_number
+            LEFT JOIN blacklist b ON p.phone_number = b.phone_number
+            LEFT JOIN whitelist w ON p.phone_number = w.phone_number
             WHERE p.phone_number IN (:phone_db, :phone_full)
             """
         )
@@ -95,7 +95,7 @@ class PhoneRepository:
 
                 blacklist_row = conn.execute(
                     text(
-                        "SELECT report_count, dominant_tag FROM fraud_blacklist WHERE phone_number IN (:phone_db, :phone_full)"
+                        "SELECT report_count, dominant_tag FROM blacklist WHERE phone_number IN (:phone_db, :phone_full)"
                     ),
                     {"phone_db": db_phone, "phone_full": normalized_phone},
                 ).mappings().first()
@@ -103,7 +103,7 @@ class PhoneRepository:
                 if blacklist_row:
                     conn.execute(
                         text(
-                            "UPDATE fraud_blacklist "
+                            "UPDATE blacklist "
                             "SET report_count = report_count + 1, last_seen_at = :last_seen_at, "
                             "dominant_tag = :phone_type, referral_type = :referral_type, referral_info = :referral_info "
                             "WHERE phone_number = :phone_number"
@@ -120,7 +120,7 @@ class PhoneRepository:
                 else:
                     conn.execute(
                         text(
-                            "INSERT INTO fraud_blacklist(phone_number, report_count, first_seen_at, last_seen_at, dominant_tag, referral_type, referral_info) "
+                            "INSERT INTO blacklist(phone_number, report_count, first_seen_at, last_seen_at, dominant_tag, referral_type, referral_info) "
                             "VALUES (:phone_number, 1, :first_seen_at, :last_seen_at, :phone_type, :referral_type, :referral_info)"
                         ),
                         {
