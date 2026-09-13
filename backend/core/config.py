@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     DB_USERNAME: str = ""
     DB_PASSWORD: str = ""
     DB_HOST: str = ""
-    DB_PORT: int = ""
+    DB_PORT: int | None = None
     DB_NAME: str = ""
     DB_TIMEOUT: int = 10
     DB_SSL_CA: str = ""
@@ -93,6 +93,20 @@ class Settings(BaseSettings):
                 return False
             if normalized in {"debug", "dev", "development"}:
                 return True
+        return value
+
+    @field_validator("DB_PORT", mode="before")
+    @classmethod
+    def parse_db_port(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("DB_SSL_CA")
+    @classmethod
+    def resolve_db_ssl_ca(cls, value: str) -> str:
+        if value and not os.path.isabs(value):
+            return str(ROOT_DIR / value)
         return value
 
 
