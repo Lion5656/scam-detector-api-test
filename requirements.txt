@@ -18,19 +18,28 @@ langchain-groq>=1.1.2
 langchain-text-splitters>=0.3.11
 langchain-huggingface>=1.2.2
 
+# 圖片 OCR 與線上查價
+google-cloud-vision
+tavily-python>=0.7.26
+serpapi>=1.0.2
+ddgs
+
 # 基礎工具
 numpy
 pandas
-pydantic
+pydantic>=2.11
 pydantic-settings>=2.13.1
 huggingface-hub>=0.36.2
 rapidfuzz>=3.14.5
 scikit-learn>=1.6.1
 sentence-transformers>=5.5.0
 tldextract
+networkx>=3.0
 
 # ML模型
 xgboost
 torch
+
+# 資料庫
 sqlalchemy
 pymysql
