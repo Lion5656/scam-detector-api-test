@@ -1,10 +1,7 @@
 import re
 
-from typing import Any, Dict, List
-
-from pydantic import BaseModel, ConfigDict, Field, model_validator, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
-
 
 
 class PhoneQueryRequest(BaseModel):
@@ -75,6 +72,20 @@ class PhoneReportRequest(BaseModel):
         return self
 
 
+class FamilyStaticItems(BaseModel):
+    """電話家族的直接關聯證據"""
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        serialize_by_alias=True,
+    )
+
+    related_phone: str = Field(..., description="關聯電話號碼")
+    weight: int = Field(..., ge=0, description="關聯強度分數")
+    reason: str = Field(..., description="關聯原因")
+    target_phone_type: str = Field(..., description="查詢號碼的詐騙類型")
+
+
 class PhoneQueryResponse(BaseModel):
     model_config = ConfigDict(
         alias_generator=to_camel,
@@ -91,12 +102,9 @@ class PhoneQueryResponse(BaseModel):
     owner_name: str | None = None
     can_report: bool = False
     # family analysis results (minimal but useful evidence)
-    family_static: Any | None = Field(
+    family_static: list[FamilyStaticItems] | None = Field(
         None,
-        description=(
-            "直接關聯證據列表；每筆包含 related_phone、weight、reason、target_phone_type。"
-            "如果沒有關聯，則為空陣列。"
-        ),
+        description="直接關聯證據列表；如果沒有關聯，則為空陣列。",
     )
 
 class PhoneReportResponse(BaseModel):

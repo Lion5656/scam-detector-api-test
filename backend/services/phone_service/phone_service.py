@@ -71,7 +71,6 @@ class PhoneService:
         return related[:10]
     
     @staticmethod
-    @staticmethod
     def _display_phone(value: str | None) -> str | None:
         if value is None:
             return None
@@ -86,6 +85,12 @@ class PhoneService:
         if normalized == "white":
             return "white"
         return "unknown"
+
+    @staticmethod
+    def _format_datetime(value) -> str | None:
+        if value is None or isinstance(value, str):
+            return value
+        return value.strftime("%Y-%m-%d %H:%M:%S")
 
     def query_phone(self, phone_number: str) -> dict:
         result = phone_repository.get_phone_record(phone_number)
@@ -104,16 +109,8 @@ class PhoneService:
                 "family_static": []
             }
 
-        first_reported_at = (
-            result.get("first_reported_at") 
-            if isinstance(result.get("first_reported_at"), str)
-            else (result.get("first_reported_at").strftime("%Y-%m-%d %H:%M:%S") if result.get("first_reported_at") else None)
-        )
-        last_reported_at = (
-            result.get("last_reported_at")
-            if isinstance(result.get("last_reported_at"), str)
-            else (result.get("last_reported_at").strftime("%Y-%m-%d %H:%M:%S") if result.get("last_reported_at") else None)
-        )
+        first_reported_at = self._format_datetime(result.get("first_reported_at"))
+        last_reported_at = self._format_datetime(result.get("last_reported_at"))
 
         status = self._db_status_to_api_status(result.get("tags"))
         if status == "white":

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 
@@ -16,6 +16,3 @@ class TextResponse(BaseModel):
     score: str | float | None = None
     reason: str | None = None
     cls_model_confidence: float | None = None
-    # decision_source: str | None = None
-    # llm_used: bool | None = None
-    # route_reason: str | None = None
