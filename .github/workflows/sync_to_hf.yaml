@@ -12,11 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           lfs: true
+      # 只推送不含歷史的快照,避免 tests/ 內的二進位檔(及其歷史)被 HF 拒絕
       - name: Push to hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git checkout --orphan hf-snapshot
+          git rm -r -q --cached --ignore-unmatch tests
+          git commit -q -m "deploy: ${GITHUB_SHA::7}"
           git remote add hf https://kko12:$HF_TOKEN@huggingface.co/spaces/kko12/spam-detector
-          git push -f hf space-deploy:main
+          git push -f hf hf-snapshot:main

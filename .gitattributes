@@ -1,2 +1,1 @@
 README.md merge=ours
-git config merge.ours.driver=true
