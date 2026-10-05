@@ -1,34 +1,45 @@
 # 核心 Web 框架
-fastapi[standard]==0.136.1
-uvicorn==0.47.0
-python-multipart==0.0.29
-python-dotenv==1.2.2
+fastapi[standard]
+uvicorn
+python-multipart
+python-dotenv
 
 # ONNX 推理引擎
-onnxruntime==1.26.0
-optimum[onnxruntime]==2.1.0
-transformers==4.57.6
-tokenizers==0.22.2
+onnxruntime
+optimum[onnxruntime]>=1.16.0
+transformers>=4.40.0
+tokenizers
 
 # RAG / LLM
-langchain-chroma==1.1.0
-langchain-community==0.4.1
-langchain-core==1.4.0
-langchain-groq==1.1.2
-langchain-text-splitters==1.1.2
-langchain-huggingface==1.2.2
+langchain-chroma>=0.2.6
+langchain-community>=0.4.1
+langchain-core>=0.3.79
+langchain-groq>=1.1.2
+langchain-text-splitters>=0.3.11
+langchain-huggingface>=1.2.2
+
+# 圖片 OCR 與線上查價
+google-cloud-vision
+tavily-python>=0.7.26
+serpapi>=1.0.2
+ddgs
 
 # 基礎工具
-numpy==2.4.5
-pandas==3.0.3
-pydantic==2.13.4
-pydantic-settings==2.14.1
-huggingface-hub==0.36.2
-rapidfuzz==3.14.5
-scikit-learn==1.8.0
-sentence-transformers==5.5.0
-tldextract==5.3.1
+numpy
+pandas
+pydantic>=2.11
+pydantic-settings>=2.13.1
+huggingface-hub>=0.36.2
+rapidfuzz>=3.14.5
+scikit-learn>=1.6.1
+sentence-transformers>=5.5.0
+tldextract
+networkx>=3.0
 
 # ML模型
-xgboost==3.2.0
-torch==2.12.0
+xgboost
+torch
+
+# 資料庫
+sqlalchemy
+pymysql

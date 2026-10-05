@@ -12,7 +12,15 @@ wheels/
 
 backend/models
 .env
+.env.*
+backend/.env
+backend/.env.*
+!.env.example
 
 data/
 db/
 
+dev.*
+
+scam-detector-ocr-*.json
+credentials.json

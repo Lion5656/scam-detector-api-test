@@ -1,12 +1,12 @@
 from typing import Any, cast
 
-from backend.config import settings
-from backend.services.dto.analysis import BaseEvidence
-from backend.services.text_service.confidence_router import confidence_router
-from backend.services.text_service.fusion_service import fusion_service
+from backend.core.config import settings
 from backend.rag.rag_reasoner import analyze_with_rag
-from backend.services.text_service.transformer_classifier import transformer_classifier
-from backend.utils.pattern import compare_rules
+from backend.services.dto.text_analysis import BaseEvidence
+from backend.services.text_service.base_classifier import base_classifier
+from backend.services.text_service.confidence_router import confidence_router
+from backend.services.text_service.fusion import fusion
+from backend.utils.pattern.text import compare_rules
 from backend.utils.text_cleaner import normalize_text
 
 
@@ -17,7 +17,7 @@ class TextAnalyzer:
         """構建基礎證據：規則特徵 + 模型預測"""
         cleaned = normalize_text(text)
         rule_score, rule_reason, rule_hits = compare_rules(cleaned)
-        model_result = transformer_classifier.predict_text(cleaned)
+        model_result = base_classifier.predict_text(cleaned)
         return BaseEvidence(
             text=cleaned,
             rule_score=rule_score,
@@ -49,7 +49,7 @@ class TextAnalyzer:
         }
 
         if model_label == "未知風險" and not rule_hits:
-            response.update({"label": "未知風險", "score": "未知", "reason": "語句缺乏明確資訊，無法進行有效判斷，評估風險為未知"})
+            response.update({"label": "未知風險", "score": 0.0, "reason": "語句缺乏明確資訊，無法進行有效判斷，評估風險為未知"})
             return response
         if model_label == "低風險" and model_confidence >= 0.8 and len(rule_hits) <= 2:
             response.update({"label": "低風險", "score": 10.0, "reason": f"此訊息所含詐騙特徵較少{extra_reason}，評估風險為低。"})
@@ -88,7 +88,7 @@ class TextAnalyzer:
             response.update({"label": "中等風險", "score": final_score, "reason": "此訊息疑似有詐騙風險，但特徵較模糊，評估風險為中等"})
             return response
         if model_eval < 0:
-            response.update({"label": "未知風險", "score": "未知", "reason": "此訊息缺乏明確資訊，無法進行有效判斷，評估風險為未知"})
+            response.update({"label": "未知風險", "score": 0.0, "reason": "此訊息缺乏明確資訊，無法進行有效判斷，評估風險為未知"})
             return response
         response.update({"label": "低風險", "score": final_score, "reason": f"此訊息所含詐騙特徵較少{extra_reason}，評估風險為低。"})
         return response
@@ -105,7 +105,7 @@ class TextAnalyzer:
             return base_result
 
         try:
-            rag_result = analyze_with_rag(evidence.text)
+            rag_result = await analyze_with_rag(evidence.text)
         except Exception as exc:
             fallback = dict(base_result)
             fallback["decision_source"] = "base"
@@ -113,11 +113,11 @@ class TextAnalyzer:
             fallback["route_reason"] = f"rag_failed:{exc.__class__.__name__}"
             return fallback
 
-        return fusion_service.merge(base_result, rag_result, decision.route_reason)
+        return fusion.merge(base_result, rag_result, decision.route_reason)
 
-    async def model_detector(self, text: str) -> dict[str, Any]:
+    def model_detector(self, text: str) -> dict[str, Any]:
         """純模型檢測"""
-        prediction = transformer_classifier.predict_text(text)
+        prediction = base_classifier.predict_text(text)
         return {
             "label": prediction["label"] or "",
             "cls_model_confidence": float(prediction.get("confidence") or 0.0),
