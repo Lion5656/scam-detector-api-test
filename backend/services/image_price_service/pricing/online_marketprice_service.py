@@ -3,9 +3,9 @@
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Literal, cast
 
-from backend.core.config import settings
 from backend.services.dto.price_analysis import (MarketPriceCandidateEvidence,
                                                  MarketPriceEstimate,
                                                  SearchTool)
@@ -17,7 +17,7 @@ from backend.services.image_price_service.pricing.search_result_price_extractor 
     SearchResultPriceExtractor, default_search_result_price_extractor,
     extract_prices_from_search_results)
 from backend.services.image_price_service.pricing.search_tools import (
-    FALLBACK_SEARCH_TOOLS, PRIMARY_SEARCH_TOOL, SEARCH_FUNCTIONS)
+    SEARCH_FUNCTIONS, SEARCH_TOOL_STAGES)
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +52,13 @@ class OnlineMarketPriceService:
         *,
         policy: PriceRiskPolicy = DEFAULT_PRICE_RISK_POLICY,
         search_functions: dict[str, Any] | None = None,
+        search_stages: tuple[tuple[str, ...], ...] = SEARCH_TOOL_STAGES,
         price_extractor: SearchResultPriceExtractor | None = None,
     ) -> None:
         """建立線上市價服務。"""
         self.policy = policy
         self._search_functions = search_functions or SEARCH_FUNCTIONS
+        self._search_stages = search_stages
         self._price_extractor = (
             price_extractor or default_search_result_price_extractor
         )
@@ -122,7 +124,7 @@ class OnlineMarketPriceService:
         *,
         condition: MarketplaceCondition,
     ) -> tuple[list[MarketPriceCandidateEvidence], list[SearchTool]]:
-        """逐一累積搜尋結果，最後以一次 LLM 呼叫整理候選價格。"""
+        """分階段並行搜尋並累積結果，最後以一次 LLM 呼叫整理候選價格。"""
         query = product_query.strip()
         if not query or max_results <= 0:
             return [], []
@@ -136,33 +138,42 @@ class OnlineMarketPriceService:
             * self.policy.preflight_multiplier
         )
 
-        tools = (PRIMARY_SEARCH_TOOL, *FALLBACK_SEARCH_TOOLS)
-        for index, tool_name in enumerate(tools):
-            if self._search_functions.get(tool_name) is None:
+        for stage in self._search_stages:
+            stage_tools = [
+                tool_name
+                for tool_name in stage
+                if self._search_functions.get(tool_name) is not None
+            ]
+            for tool_name in set(stage) - set(stage_tools):
                 logger.warning("找不到搜尋工具：%s", tool_name)
+            if not stage_tools:
                 continue
-            if index > 0:
-                self._wait_before_fallback(tool_name)
 
-            tool_label = cast(
-                SearchTool,
-                self._SEARCH_TOOL_LABELS.get(tool_name, tool_name),
-            )
-            search_tools.append(tool_label)
-            search_results.extend(
-                self._fetch_results(
-                    conditioned_query,
-                    max_results,
-                    tool_name,
+            # 同一階段的工具彼此獨立，並行呼叫；map 保持工具順序以維持結果排序穩定
+            with ThreadPoolExecutor(max_workers=len(stage_tools)) as executor:
+                stage_results = list(
+                    executor.map(
+                        lambda tool_name: self._fetch_results(
+                            conditioned_query,
+                            max_results,
+                            tool_name,
+                        ),
+                        stage_tools,
+                    )
                 )
-            )
+            for tool_name, tool_results in zip(stage_tools, stage_results):
+                search_tools.append(
+                    cast(SearchTool, self._SEARCH_TOOL_LABELS.get(tool_name, tool_name))
+                )
+                search_results.extend(tool_results)
+
             preflight_count = sum(
                 self._is_price_result(result, condition)
                 for result in search_results
             )
             logger.info(
                 "價格搜尋預檢 工具=%s 合格數=%d 門檻=%d",
-                tool_label,
+                ",".join(search_tools),
                 preflight_count,
                 preflight_target,
             )
@@ -182,6 +193,7 @@ class OnlineMarketPriceService:
             for result in search_results
             if not self._is_price_result(result, condition)
         )
+        extraction_started = time.perf_counter()
         try:
             candidates = extract_prices_from_search_results(
                 prioritized_results,
@@ -198,7 +210,12 @@ class OnlineMarketPriceService:
             )
             return [], search_tools
 
-        logger.info("搜尋結果價格擷取完成 搜尋結果數=%d 候選數=%d", len(search_results), len(candidates))
+        logger.info(
+            "搜尋結果價格擷取完成 搜尋結果數=%d 候選數=%d 耗時=%.2f 秒",
+            len(search_results),
+            len(candidates),
+            time.perf_counter() - extraction_started,
+        )
         return candidates, search_tools
 
     def _fetch_results(
@@ -216,13 +233,15 @@ class OnlineMarketPriceService:
             logger.warning("找不到搜尋工具：%s", tool_name)
             return []
 
+        search_started = time.perf_counter()
         try:
             search_results = search_fn(query, max_results)
         except Exception as error:
             logger.error(
-                "搜尋工具執行失敗 工具=%s 錯誤=%s",
+                "搜尋工具執行失敗 工具=%s 錯誤=%s 耗時=%.2f 秒",
                 tool_label,
                 str(error),
+                time.perf_counter() - search_started,
             )
             return []
 
@@ -234,7 +253,12 @@ class OnlineMarketPriceService:
             for result in search_results
             if isinstance(result, dict)
         ]
-        logger.info("價格搜尋完成 工具=%s 結果數=%d", tool_label, len(results))
+        logger.info(
+            "價格搜尋完成 工具=%s 結果數=%d 耗時=%.2f 秒",
+            tool_label,
+            len(results),
+            time.perf_counter() - search_started,
+        )
         return results
 
     def _is_price_result(
@@ -496,11 +520,5 @@ class OnlineMarketPriceService:
             return query
         return f"{query} {' '.join(missing_terms)}"
 
-    def _wait_before_fallback(self, tool_name: str) -> None:
-        delay = max(0.0, settings.ONLINE_PRICE_FALLBACK_DELAY_SECONDS)
-        if delay <= 0:
-            return
-        logger.info("價格搜尋等待備援工具 工具=%s 延遲=%.1f 秒", self._SEARCH_TOOL_LABELS.get(tool_name, tool_name), delay)
-        time.sleep(delay)
 
 online_marketprice_service = OnlineMarketPriceService()

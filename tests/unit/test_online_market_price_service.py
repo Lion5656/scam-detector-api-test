@@ -1,5 +1,6 @@
 import hashlib
 import json
+import threading
 from typing import Any
 
 import pytest
@@ -11,9 +12,6 @@ from backend.services.image_price_service.domain.policy import (
     DEFAULT_PRICE_RISK_POLICY,
     PriceRiskPolicy,
 )
-from backend.services.image_price_service.pricing import (
-    online_marketprice_service,
-)
 from backend.services.image_price_service.pricing.online_marketprice_service import (
     OnlineMarketPriceService,
 )
@@ -21,14 +19,9 @@ from backend.services.image_price_service.pricing import search_tools
 
 
 @pytest.fixture(autouse=True)
-def _disable_search_fallback_delay(monkeypatch) -> None:
+def _clear_tavily_api_key(monkeypatch) -> None:
     monkeypatch.setattr(
-        online_marketprice_service.settings,
-        "ONLINE_PRICE_FALLBACK_DELAY_SECONDS",
-        0.0,
-    )
-    monkeypatch.setattr(
-        online_marketprice_service.settings,
+        search_tools.settings,
         "TAVILY_SEARCH_API_KEY",
         SecretStr(""),
     )
@@ -167,7 +160,7 @@ def test_serpapi_search_tool_is_called_directly(monkeypatch) -> None:
     class FakeSerpApiClient:
         def __init__(self, *, api_key: str, timeout: int) -> None:
             assert api_key == "serp-test-key"
-            assert timeout == 60
+            assert timeout == search_tools.settings.SEARCH_TIMEOUT_SECONDS
 
         def search(self, params: dict) -> str:
             calls.append(params)
@@ -233,7 +226,7 @@ def test_serpapi_search_tool_fetches_two_pages(monkeypatch) -> None:
     class FakeSerpApiClient:
         def __init__(self, *, api_key: str, timeout: int) -> None:
             assert api_key == "serp-test-key"
-            assert timeout == 60
+            assert timeout == search_tools.settings.SEARCH_TIMEOUT_SECONDS
 
         def search(self, params: dict) -> dict:
             calls.append(params)
@@ -261,7 +254,8 @@ def test_serpapi_search_tool_fetches_two_pages(monkeypatch) -> None:
 
     result = search_tools.search_serpapi("目標商品 價格", 20)
 
-    assert [call.get("start", 0) for call in calls] == [0, 10]
+    # 分頁並行抓取，呼叫順序不固定，但結果仍須依分頁順序合併
+    assert sorted(call.get("start", 0) for call in calls) == [0, 10]
     assert len(result) == 20
     assert result[0]["title"] == "商品 1"
     assert result[-1]["title"] == "商品 20"
@@ -498,7 +492,7 @@ def test_unknown_preflight_uses_six_total_without_condition_quota(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        online_marketprice_service.settings,
+        search_tools.settings,
         "TAVILY_SEARCH_API_KEY",
         SecretStr("tavily-test-key"),
     )
@@ -513,7 +507,7 @@ def test_unknown_preflight_uses_six_total_without_condition_quota(
     service, fakes = _make_service_with_fake_search(
         {
             "serpapi": new_results,
-            "tavily": new_results,
+            "tavily": [],
             "ddgs": new_results,
         }
     )
@@ -528,7 +522,7 @@ def test_unknown_preflight_uses_six_total_without_condition_quota(
     assert estimates[0].condition is MarketplaceCondition.UNKNOWN
     assert estimates[0].sample_count == 6
     assert len(fakes["serpapi"].calls) == 1
-    assert fakes["tavily"].calls == []
+    assert len(fakes["tavily"].calls) == 1
     assert fakes["ddgs"].calls == []
     assert len(service._price_extractor.calls) == 1
 
@@ -747,7 +741,7 @@ def test_fallback_searches_accumulate_candidates_until_policy_is_met(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        online_marketprice_service.settings,
+        search_tools.settings,
         "TAVILY_SEARCH_API_KEY",
         SecretStr("tavily-test-key"),
     )
@@ -783,11 +777,11 @@ def test_fallback_searches_accumulate_candidates_until_policy_is_met(
     assert len(service._price_extractor.calls) == 1
 
 
-def test_primary_preflight_target_skips_all_fallbacks(
+def test_first_stage_calls_serpapi_and_tavily_and_skips_ddgs(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        online_marketprice_service.settings,
+        search_tools.settings,
         "TAVILY_SEARCH_API_KEY",
         SecretStr("tavily-test-key"),
     )
@@ -802,7 +796,7 @@ def test_primary_preflight_target_skips_all_fallbacks(
     service, fakes = _make_service_with_fake_search(
         {
             "serpapi": results,
-            "tavily": results,
+            "tavily": [],
             "ddgs": results,
         }
     )
@@ -813,18 +807,51 @@ def test_primary_preflight_target_skips_all_fallbacks(
     )
 
     assert estimate.status == "success"
-    assert estimate.search_tools == ["serp_api"]
+    assert estimate.search_tools == ["serp_api", "tavily"]
     assert len(fakes["serpapi"].calls) == 1
-    assert fakes["tavily"].calls == []
+    assert len(fakes["tavily"].calls) == 1
     assert fakes["ddgs"].calls == []
     assert len(service._price_extractor.calls) == 1
 
 
-def test_first_fallback_reaching_preflight_target_skips_ddgs(
+def test_first_stage_search_tools_run_concurrently() -> None:
+    # 兩個工具都必須同時抵達 barrier 才能回傳；若依序呼叫會逾時並拋出 BrokenBarrierError
+    barrier = threading.Barrier(2, timeout=5)
+    results = [
+        _search_result(
+            product="Apple iPhone 15 256GB",
+            price=30_000 + index * 100,
+            condition_text="全新",
+        )
+        for index in range(6)
+    ]
+
+    def blocking_search(query: str, max_results: int = 10) -> list[dict]:
+        barrier.wait()
+        return results[:3]
+
+    service = OnlineMarketPriceService(
+        search_functions={
+            "serpapi": blocking_search,
+            "tavily": blocking_search,
+        },
+        price_extractor=_FakePriceExtractor(),
+    )
+
+    estimate = service.estimate_price(
+        "Apple iPhone 15 256GB 價格",
+        condition=MarketplaceCondition.NEW,
+    )
+
+    assert estimate.search_tools == ["serp_api", "tavily"]
+    assert estimate.sample_count == 6
+
+
+def test_combined_first_stage_reaching_preflight_target_skips_ddgs(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        online_marketprice_service.settings,
+        search_tools.settings,
         "TAVILY_SEARCH_API_KEY",
         SecretStr("tavily-test-key"),
     )
@@ -861,7 +888,7 @@ def test_duplicate_candidates_across_search_tools_are_preserved(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        online_marketprice_service.settings,
+        search_tools.settings,
         "TAVILY_SEARCH_API_KEY",
         SecretStr("tavily-test-key"),
     )

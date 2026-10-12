@@ -190,9 +190,7 @@ def test_application_assembly_and_fallback_use_the_shared_policy():
     assert fallback["risk_label"] == "MEDIUM"
 
 
-def test_custom_policy_changes_price_boundary_label_and_deep_analysis(
-    monkeypatch,
-):
+def test_custom_policy_changes_price_boundary_label():
     policy = PriceRiskPolicy(
         **_policy_data(
             low_score_max=0,
@@ -201,15 +199,8 @@ def test_custom_policy_changes_price_boundary_label_and_deep_analysis(
             small_sample_score_cap=10,
         )
     )
-    default_calls: list[dict] = []
-    custom_calls: list[dict] = []
-    default_engine = FusionDecisionEngine(
-        condition_reviewer=lambda context: default_calls.append(context),
-    )
-    custom_engine = FusionDecisionEngine(
-        policy=policy,
-        condition_reviewer=lambda context: custom_calls.append(context),
-    )
+    default_engine = FusionDecisionEngine()
+    custom_engine = FusionDecisionEngine(policy=policy)
     estimate = MarketPriceEstimate(
         status="success",
         condition=MarketplaceCondition.NEW,
@@ -228,19 +219,44 @@ def test_custom_policy_changes_price_boundary_label_and_deep_analysis(
         "market_estimates": (estimate,),
         "condition": MarketplaceCondition.NEW,
         "condition_detail": "全新",
-        "condition_source_text": "狀況 全新",
-        "condition_extraction_confidence": 0.8,
     }
 
     default_result = default_engine.evaluate(**arguments)
     custom_result = custom_engine.evaluate(**arguments)
 
     assert default_result["risk_label"] == "LOW"
-    assert default_result["decision_layer"] == "fast"
-    assert default_calls == []
     assert custom_result["risk_label"] == "HIGH"
-    assert custom_result["decision_layer"] == "llm_simulated"
-    assert len(custom_calls) == 1
+
+
+def test_custom_policy_changes_condition_review_threshold():
+    policy = PriceRiskPolicy(
+        **_policy_data(condition_llm_correction_max_confidence=0.5)
+    )
+    default_calls: list[dict] = []
+    custom_calls: list[dict] = []
+    default_engine = FusionDecisionEngine(
+        condition_reviewer=lambda context: default_calls.append(context),
+    )
+    custom_engine = FusionDecisionEngine(
+        policy=policy,
+        condition_reviewer=lambda context: custom_calls.append(context),
+    )
+    arguments = {
+        "product_name": "測試商品",
+        "text": "",
+        "condition": MarketplaceCondition.NEW,
+        "condition_detail": "全新",
+        "condition_source_text": "狀況 全新",
+        "condition_extraction_confidence": 0.8,
+    }
+
+    default_outcome = default_engine.review_condition(**arguments)
+    custom_outcome = custom_engine.review_condition(**arguments)
+
+    assert default_outcome.status == "unavailable"
+    assert len(default_calls) == 1
+    assert custom_outcome.status == "skipped"
+    assert custom_calls == []
 
 
 def test_custom_policy_changes_supported_market_price_boundary():

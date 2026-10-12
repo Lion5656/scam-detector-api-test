@@ -1,6 +1,8 @@
 """協調商品圖片的來源驗證、價格抽取與風險分析流程。"""
 
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
 from backend.core.config import settings
@@ -32,6 +34,13 @@ from backend.services.image_price_service.risk.fusion_decision_engine import \
     FusionDecisionEngine
 
 logger = logging.getLogger(__name__)
+
+
+def _log_elapsed(stage: str, started: float) -> float:
+    """記錄單一階段耗時，並回傳下一階段的起始時間。"""
+    now = time.perf_counter()
+    logger.info("圖片查價階段耗時 階段=%s 耗時=%.2f 秒", stage, now - started)
+    return now
 
 default_online_price_service = OnlineMarketPriceService(
     policy=DEFAULT_PRICE_RISK_POLICY,
@@ -183,7 +192,9 @@ class ImagePriceAnalyzer:
         content_type: str = "",
     ) -> ImagePriceAnalysisResult:
         """分析 Marketplace 截圖並回傳價格風險結果。"""
+        request_started = stage_started = time.perf_counter()
         document = self._ocr_service.extract_document(data)
+        stage_started = _log_elapsed("OCR", stage_started)
         text = document.text
         detection = self._marketplace_detector.detect(document)
         if not detection.is_marketplace:
@@ -269,79 +280,65 @@ class ImagePriceAnalyzer:
             )
 
         product_name = extraction.product_name
-        product = self._product_identifier.identify(product_name)
-        resolved_market_estimates = resolve_market_price(
+        # 商品正規化與品況複核都只依賴 OCR 抽取結果，彼此獨立，並行呼叫以縮短等待
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            product_future = executor.submit(
+                self._product_identifier.identify,
+                product_name,
+            )
+            review_future = executor.submit(
+                self._decision_engine.review_condition,
+                product_name=product_name,
+                text=text,
+                condition=extraction.condition,
+                condition_detail=extraction.condition_detail,
+                condition_source_text=extraction.condition_source_text,
+                condition_extraction_confidence=extraction.condition_extraction_confidence,
+            )
+            product = product_future.result()
+            condition_review = review_future.result()
+        stage_started = _log_elapsed("商品正規化與品況複核", stage_started)
+
+        market_estimates = resolve_market_price(
             self._online_price_service,
             product_name,
             product.brand_model,
             product.market_price,
             product.search_query,
-            condition=extraction.condition,
-            condition_text=extraction.condition_detail,
+            condition=condition_review.condition,
+            condition_text=condition_review.condition_detail,
         )
-        search_tools = self._search_tools(resolved_market_estimates)
-        active_market_estimates = self._without_market_candidates(
-            resolved_market_estimates
-        )
-        reprice_performed = False
-
-        def reprice_once(
-            condition: MarketplaceCondition,
-            condition_detail: str,
-        ) -> tuple[MarketPriceEstimate, ...]:
-            nonlocal active_market_estimates, reprice_performed, search_tools
-            if reprice_performed:
-                return active_market_estimates
-            reprice_performed = True
-            repriced_estimates = resolve_market_price(
-                self._online_price_service,
-                product_name,
-                product.brand_model,
-                product.market_price,
-                product.search_query,
-                condition=condition,
-                condition_text=condition_detail,
-            )
-            for search_tool in self._search_tools(repriced_estimates):
-                if search_tool not in search_tools:
-                    search_tools.append(search_tool)
-            active_market_estimates = self._without_market_candidates(
-                repriced_estimates
-            )
-            return active_market_estimates
+        search_tools = self._search_tools(market_estimates)
+        active_market_estimates = self._without_market_candidates(market_estimates)
+        stage_started = _log_elapsed("市場查價", stage_started)
 
         selling_price = cast(int, extraction.price)
         decision = self._decision_engine.evaluate(
             product_name=product_name,
             selling_price=selling_price,
             market_estimates=active_market_estimates,
-            condition=extraction.condition,
-            condition_detail=extraction.condition_detail,
-            condition_source_text=extraction.condition_source_text,
-            condition_extraction_confidence=(
-                extraction.condition_extraction_confidence
-            ),
-            text=text,
-            reprice=reprice_once,
+            condition=condition_review.condition,
+            condition_detail=condition_review.condition_detail,
+            condition_review=condition_review,
         )
         decision_error_code = decision.get("error_code")
         if not isinstance(decision_error_code, str):
             decision_error_code = None
 
-        decision_condition = decision.get("condition", extraction.condition)
+        decision_condition = decision.get("condition", condition_review.condition)
         if isinstance(decision_condition, MarketplaceCondition):
             resolved_condition = decision_condition
         elif isinstance(decision_condition, str):
             try:
                 resolved_condition = MarketplaceCondition(decision_condition)
             except ValueError:
-                resolved_condition = extraction.condition
+                resolved_condition = condition_review.condition
         else:
-            resolved_condition = extraction.condition
+            resolved_condition = condition_review.condition
         resolved_condition_detail = str(
             decision.get(
                 "condition_detail",
-                extraction.condition_detail,
+                condition_review.condition_detail,
             )
             or ""
         )
@@ -393,6 +390,8 @@ class ImagePriceAnalyzer:
         )
 
         record_case(self._case_repo, result)
+        _log_elapsed("風險決策與紀錄", stage_started)
+        _log_elapsed("總計", request_started)
         return result
 
 

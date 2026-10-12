@@ -3,6 +3,7 @@
 import json
 from typing import Any
 
+from backend.core.config import settings
 from backend.providers import groq_provider
 from backend.services.dto.price_analysis import DeepAnalysisReview
 
@@ -53,6 +54,8 @@ class ConditionReviewer:
             model=self._model_name,
             temperature=0,
             reasoning_effort="none",
+            timeout=settings.PRICE_LLM_TIMEOUT_SECONDS,
+            max_retries=settings.PRICE_LLM_MAX_RETRIES,
             api_key=self._api_key,
         )
         structured_llm: Any = llm.with_structured_output(

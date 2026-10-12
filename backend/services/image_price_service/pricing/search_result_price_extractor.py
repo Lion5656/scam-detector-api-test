@@ -23,10 +23,10 @@ logger = logging.getLogger(__name__)
 
 _ZERO_WIDTH_CHARACTERS = frozenset(
     {
-        "\u200b",
-        "\u200c",
-        "\u200d",
-        "\ufeff",
+        "\N{ZERO WIDTH SPACE}",
+        "\N{ZERO WIDTH NON-JOINER}",
+        "\N{ZERO WIDTH JOINER}",
+        "\N{ZERO WIDTH NO-BREAK SPACE}",
     }
 )
 _ALLOWED_SYMBOLS = frozenset({"$", "+", "×", "=", "~"})
@@ -134,6 +134,9 @@ class SearchResultPriceExtractor:
             model=self._model_name,
             temperature=0,
             api_key=self._api_key,
+            reasoning_effort=settings.PRICE_REASONING_EFFORT,
+            timeout=settings.PRICE_LLM_TIMEOUT_SECONDS,
+            max_retries=settings.PRICE_LLM_MAX_RETRIES,
         )
         self._structured_llm = (
             llm.bind(
