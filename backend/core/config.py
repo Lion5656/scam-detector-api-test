@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     NORMALIZER_MODEL: str = "openai/gpt-oss-120b"
     PRICE_MODEL: str = "openai/gpt-oss-120b"
     REVIEW_MODEL: str = "qwen/qwen3.8-27b"
+    # 空字串代表不指定推理強度；gpt-oss 系列可用 low／medium／high
+    NORMALIZER_REASONING_EFFORT: str = "low"
+    PRICE_REASONING_EFFORT: str = "low"
+    PRICE_LLM_TIMEOUT_SECONDS: float = 10.0
+    PRICE_LLM_MAX_RETRIES: int = 1
     TAVILY_SEARCH_API_KEY: SecretStr = SecretStr("")
     SERP_API_KEY: SecretStr = SecretStr("")
     SEARCH_COUNTRY: str = "taiwan"
@@ -58,7 +63,7 @@ class Settings(BaseSettings):
     ONLINE_PRICE_MAX_RESULTS: int = 20
     SEARCH_DOMAIN: list[str] = ["biggo.com.tw", "momo.com.tw", "pchome.com.tw", "shopee.tw", "ruten.com.tw", "tw.carousell.com"]
     EXCLUDE_DOMAIN: list[str] = ["zh.wikipedia.org"]
-    ONLINE_PRICE_FALLBACK_DELAY_SECONDS: float = 2.0
+    SEARCH_TIMEOUT_SECONDS: float = 10.0
     GROQ_FALLBACK_RETRY_DELAY_SECONDS: float = 2.0
     GROQ_RATE_LIMIT_MAX_WAIT_SECONDS: float = 30.0
     PRODUCT_MATCH_FUZZY_MIN_SCORE: int = 86

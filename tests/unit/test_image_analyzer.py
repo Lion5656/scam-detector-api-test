@@ -1,3 +1,5 @@
+import threading
+
 from backend.services.dto.price_analysis import (
     DeepAnalysisReview,
     MarketPriceCandidateEvidence,
@@ -17,6 +19,7 @@ from backend.services.image_price_service.image_price_analyzer import (
     ImagePriceAnalyzer,
 )
 from backend.services.image_price_service.risk.fusion_decision_engine import (
+    ConditionReviewOutcome,
     FusionDecisionEngine,
 )
 
@@ -134,21 +137,19 @@ class _FakeOnlinePriceService:
 
 
 class _FakeDecisionEngine:
-    def __init__(self, *, call_reprice_twice: bool = False):
+    def __init__(self):
         self.received = None
-        self.call_reprice_twice = call_reprice_twice
-        self.reprice_results = []
+        self.review_received = None
+
+    def review_condition(self, **kwargs) -> ConditionReviewOutcome:
+        self.review_received = kwargs
+        return ConditionReviewOutcome(
+            condition=kwargs["condition"],
+            condition_detail=kwargs["condition_detail"],
+        )
 
     def evaluate(self, **kwargs):
         self.received = kwargs
-        if self.call_reprice_twice:
-            callback = kwargs["reprice"]
-            self.reprice_results.append(
-                callback(MarketplaceCondition.NEW, "全新")
-            )
-            self.reprice_results.append(
-                callback(MarketplaceCondition.USED, "二手")
-            )
         return {
             "risk_label": "LOW",
             "risk_score": 25.0,
@@ -259,13 +260,17 @@ def test_image_price_detector_passes_only_structured_decision_input(
     assert result.market_price == 27_900
     assert identifier.received == "iphone 15 256GB"
 
+    review_received = decision.review_received
+    assert review_received["condition"] is MarketplaceCondition.USED
+    assert review_received["condition_source_text"] == "狀況 二手・近全新"
+    assert review_received["text"] == _USED_LISTING
+    assert review_received["condition_extraction_confidence"] == 0.97
+
     received = decision.received
     assert received["selling_price"] == 25_000
     assert received["condition"] is MarketplaceCondition.USED
     assert received["condition_detail"] == "近全新"
-    assert received["condition_source_text"] == "狀況 二手・近全新"
-    assert received["text"] == _USED_LISTING
-    assert received["condition_extraction_confidence"] == 0.97
+    assert received["condition_review"].status == "skipped"
     assert received["market_estimates"][0].candidates == ()
     assert result.market_price_estimates[0].candidates == ()
     assert {
@@ -365,26 +370,39 @@ def test_unknown_condition_keeps_combined_market_estimate(monkeypatch):
     assert result.decision_layer == "fast"
 
 
-def test_reprice_callback_can_resolve_market_price_only_once(monkeypatch):
+def test_product_identification_and_condition_review_run_concurrently(
+    monkeypatch,
+):
     monkeypatch.setattr(
         "backend.services.image_price_service.case_recorder.settings.CASE_MEMORY_ENABLED",
         False,
     )
-    decision = _FakeDecisionEngine(call_reprice_twice=True)
-    analyzer, _, _, service = _build_analyzer(
+    # 兩邊都必須同時抵達 barrier 才能繼續；若依序執行會逾時並拋出 BrokenBarrierError
+    barrier = threading.Barrier(2, timeout=5)
+
+    class _BlockingIdentifier(_FakeProductIdentifier):
+        def identify(self, text: str) -> ProductIdentification:
+            barrier.wait()
+            return super().identify(text)
+
+    class _BlockingDecisionEngine(_FakeDecisionEngine):
+        def review_condition(self, **kwargs) -> ConditionReviewOutcome:
+            barrier.wait()
+            return super().review_condition(**kwargs)
+
+    analyzer, _, identifier, _ = _build_analyzer(
         _USED_LISTING,
         market_price=27_900,
-        decision_engine=decision,
+        decision_engine=_BlockingDecisionEngine(),
     )
+    analyzer._product_identifier = _BlockingIdentifier(identifier.product)
 
-    analyzer.image_price_detector(b"image")
+    result = analyzer.image_price_detector(b"image")
 
-    assert len(service.calls) == 2
-    assert service.calls[1]["condition"] is MarketplaceCondition.NEW
-    assert decision.reprice_results[0] is decision.reprice_results[1]
+    assert result.success is True
 
 
-def test_llm_condition_correction_reprices_once_and_uses_final_interval(
+def test_llm_condition_correction_happens_before_single_market_search(
     monkeypatch,
 ):
     monkeypatch.setattr(
@@ -425,11 +443,10 @@ def test_llm_condition_correction_reprices_once_and_uses_final_interval(
 
     result = analyzer.image_price_detector(b"image")
 
-    assert len(service.calls) == 2
     assert [call["condition"] for call in service.calls] == [
-        MarketplaceCondition.NEW,
         MarketplaceCondition.USED,
     ]
+    assert service.calls[0]["condition_text"] == "近全新"
     assert result.condition is MarketplaceCondition.USED
     assert result.condition_detail == "近全新"
     assert result.market_price == 10_000

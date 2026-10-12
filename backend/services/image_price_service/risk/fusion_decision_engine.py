@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from pydantic import ValidationError
@@ -22,11 +23,22 @@ ConditionReviewer = Callable[
     [dict[str, object]],
     DeepAnalysisReview | dict[str, object] | None,
 ]
-RepriceCallback = Callable[
-    [MarketplaceCondition, str],
-    tuple[MarketPriceEstimate, ...],
-]
 PriceDirection = Literal["within", "under", "over"]
+ConditionReviewStatus = Literal["skipped", "confirmed", "corrected", "unavailable"]
+
+
+@dataclass(frozen=True)
+class ConditionReviewOutcome:
+    """查價前的狀態複核結果；condition／condition_detail 為查價與決策採用的最終品況。
+
+    status：skipped＝不需複核、confirmed＝LLM 確認原品況、corrected＝採用 LLM 修正、
+    unavailable＝需要複核但 LLM 失敗、證據不可追溯或不得覆寫高信心品況。
+    """
+
+    condition: MarketplaceCondition
+    condition_detail: str
+    status: ConditionReviewStatus = "skipped"
+    review: DeepAnalysisReview | None = None
 
 
 class FusionDecisionEngine:
@@ -195,9 +207,8 @@ class FusionDecisionEngine:
             "evidence": evidence,
         }
 
-    def _requires_deep_analysis(
+    def _requires_condition_review(
         self,
-        base_score: float,
         condition: MarketplaceCondition,
         condition_extraction_confidence: float,
         text: str,
@@ -205,8 +216,7 @@ class FusionDecisionEngine:
         condition_source_text: str,
         condition_has_conflict: bool,
     ) -> bool:
-        """只在價格有風險且有需要複核的有限狀態證據時呼叫 LLM。"""
-        has_price_risk = base_score > self.policy.low_score_max
+        """只在品況不確定且有可複核的狀態證據時呼叫 LLM。"""
         has_reviewable_evidence = any(
             value.strip()
             for value in (text, condition_detail, condition_source_text)
@@ -217,25 +227,17 @@ class FusionDecisionEngine:
             <= self.policy.condition_llm_correction_max_confidence
             or condition_has_conflict
         )
-        return (
-            has_price_risk
-            and has_reviewable_evidence
-            and condition_needs_review
-        )
+        return has_reviewable_evidence and condition_needs_review
 
     def _alt_deep_result(
         self,
         base_result: dict[str, Any],
     ) -> dict[str, Any]:
-        """LLM 無效時原樣保留 MEDIUM／HIGH 價格規則結果。"""
+        """LLM 狀態複核無效時原樣保留價格規則結果。"""
         score = base_result.get("risk_score")
         if not isinstance(score, (int, float)):
             raise ValueError("_alt_deep_result() 需要數字規則分數")
         label = self._risk_label_from_score(float(score))
-        if label not in {"MEDIUM", "HIGH"}:
-            raise ValueError(
-                "_alt_deep_result() 只接受 MEDIUM／HIGH 規則結果"
-            )
 
         evidence = [str(item) for item in base_result.get("evidence") or []]
         fallback_evidence = "LLM 狀態複核不可用，保留原始價格規則結果"
@@ -431,105 +433,44 @@ class FusionDecisionEngine:
 
     def _apply_review(
         self,
-        *,
         base_result: dict[str, Any],
-        review: DeepAnalysisReview,
-        selling_price: int,
-        original_condition: MarketplaceCondition,
-        original_condition_detail: str,
-        original_market_estimates: tuple[MarketPriceEstimate, ...],
-        condition_extraction_confidence: float,
-        reprice: RepriceCallback | None,
+        condition_detail: str,
+        condition_review: ConditionReviewOutcome | None,
     ) -> dict[str, Any]:
-        same_condition = review.reviewed_condition == original_condition
-        same_detail = (
-            self._normalize_review_text(review.condition_detail)
-            == self._normalize_review_text(original_condition_detail)
+        """依查價前的狀態複核結果標註決策層、理由與證據，不改變價格分數。"""
+        if condition_review is None or condition_review.status == "skipped":
+            return {
+                **base_result,
+                "decision_layer": "fast",
+                "condition_detail": condition_detail,
+            }
+
+        review = condition_review.review
+        if condition_review.status == "unavailable" or review is None:
+            return {
+                **self._alt_deep_result(base_result),
+                "condition_detail": condition_detail,
+            }
+
+        review_reason = (
+            "LLM 已確認原始商品狀態"
+            if condition_review.status == "confirmed"
+            else f"LLM 狀態複核：{review.reason}"
         )
-        if same_condition and same_detail:
-            evidence = [
+        return {
+            **base_result,
+            "reason": f"{base_result['reason']}；{review_reason}",
+            "evidence": [
                 *[str(item) for item in base_result.get("evidence") or []],
                 review.condition_evidence,
-            ]
-            confirmed_result = {
-                **base_result,
-                "reason": (
-                    f"{base_result['reason']}；LLM 已確認原始商品狀態"
-                ),
-                "evidence": evidence,
-                "confidence": min(
-                    float(base_result.get("confidence") or 0.0),
-                    review.review_confidence,
-                ),
-                "decision_layer": "llm",
-                "condition_detail": original_condition_detail,
-            }
-            return self._enforce_final_decision(
-                confirmed_result,
-                selling_price=selling_price,
-                condition=original_condition,
-                market_estimates=original_market_estimates,
-            )
-
-        if (
-            condition_extraction_confidence
-            > self.policy.condition_llm_correction_max_confidence
-            or reprice is None
-        ):
-            return self._enforce_final_decision(
-                self._alt_deep_result(base_result),
-                selling_price=selling_price,
-                condition=original_condition,
-                market_estimates=original_market_estimates,
-            )
-
-        try:
-            repriced_estimates = tuple(
-                reprice(
-                    review.reviewed_condition,
-                    review.condition_detail,
-                )
-            )
-        except Exception:
-            return self._decision_error(
-                "MARKET_PRICE_REPRICE_FAILED",
-                "接受狀態修正後重新查價失敗",
-                condition=review.reviewed_condition,
-            )
-
-        repriced_result = self._evaluate_market_paths(
-            selling_price=selling_price,
-            condition=review.reviewed_condition,
-            market_estimates=repriced_estimates,
-        )
-        if repriced_result.get("decision_layer") == "decision_error":
-            return repriced_result
-
-        evidence = [
-            *[str(item) for item in repriced_result.get("evidence") or []],
-            review.condition_evidence,
-        ]
-        reviewed_result = {
-            **repriced_result,
-            "reason": (
-                f"{repriced_result['reason']}；"
-                f"LLM 狀態複核：{review.reason}"
-            ),
-            "evidence": evidence,
+            ],
             "confidence": min(
-                float(repriced_result.get("confidence") or 0.0),
+                float(base_result.get("confidence") or 0.0),
                 review.review_confidence,
             ),
             "decision_layer": "llm",
-            "condition": review.reviewed_condition,
-            "condition_detail": review.condition_detail,
+            "condition_detail": condition_detail,
         }
-        return self._enforce_final_decision(
-            reviewed_result,
-            selling_price=selling_price,
-            condition=review.reviewed_condition,
-            market_estimates=repriced_estimates,
-        )
 
     def _enforce_final_decision(
         self,
@@ -552,6 +493,70 @@ class FusionDecisionEngine:
             market_estimates[0],
         )
 
+    def review_condition(
+        self,
+        *,
+        product_name: str,
+        text: str,
+        condition: MarketplaceCondition,
+        condition_detail: str,
+        condition_source_text: str,
+        condition_extraction_confidence: float,
+        condition_has_conflict: bool = False,
+    ) -> ConditionReviewOutcome:
+        """在查價前複核品況，讓後續只需以最終品況查價一次。"""
+        original = ConditionReviewOutcome(
+            condition=condition,
+            condition_detail=condition_detail,
+        )
+        if self._condition_reviewer is None or not self._requires_condition_review(
+            condition,
+            condition_extraction_confidence,
+            text,
+            condition_detail,
+            condition_source_text,
+            condition_has_conflict,
+        ):
+            return original
+
+        review = self._call_llm_deep_analysis(
+            {
+                "product_name": " ".join(product_name.split()),
+                "text": " ".join(text.split()),
+                "condition": condition.value,
+                "condition_detail": condition_detail,
+                "condition_source_text": condition_source_text,
+                "condition_extraction_confidence": (
+                    condition_extraction_confidence
+                ),
+            }
+        )
+        if review is None or not self._review_is_acceptable(
+            review,
+            text,
+            condition_detail,
+            condition_source_text,
+        ):
+            return replace(original, status="unavailable")
+
+        same_detail = (
+            self._normalize_review_text(review.condition_detail)
+            == self._normalize_review_text(condition_detail)
+        )
+        if review.reviewed_condition == condition and same_detail:
+            return replace(original, status="confirmed", review=review)
+        if (
+            condition_extraction_confidence
+            > self.policy.condition_llm_correction_max_confidence
+        ):
+            return replace(original, status="unavailable")
+        return ConditionReviewOutcome(
+            condition=review.reviewed_condition,
+            condition_detail=review.condition_detail,
+            status="corrected",
+            review=review,
+        )
+
     def evaluate(
         self,
         *,
@@ -560,16 +565,12 @@ class FusionDecisionEngine:
         market_estimates: tuple[MarketPriceEstimate, ...] = (),
         condition: MarketplaceCondition = MarketplaceCondition.UNKNOWN,
         condition_detail: str = "",
-        condition_source_text: str = "",
-        condition_extraction_confidence: float = 0.0,
-        condition_has_conflict: bool = False,
-        reprice: RepriceCallback | None = None,
+        condition_review: ConditionReviewOutcome | None = None,
         brand_model: str = "",
-        text: str = "",
         market_price: int | None = None,
         market_price_source: MarketPriceSource = "not_evaluated",
     ) -> dict[str, Any]:
-        """執行結構化價格規則，並在符合條件時選用 LLM 複核狀態。"""
+        """以最終品況的市場區間執行價格規則，並標註查價前的狀態複核結果。"""
         del brand_model, market_price, market_price_source
 
         if not product_name.strip():
@@ -599,75 +600,11 @@ class FusionDecisionEngine:
         if base_result.get("decision_layer") == "decision_error":
             return base_result
 
-        base_score = float(base_result["risk_score"])
-        if not self._requires_deep_analysis(
-            base_score,
-            condition,
-            condition_extraction_confidence,
-            text,
-            condition_detail,
-            condition_source_text,
-            condition_has_conflict,
-        ):
-            fast_result = {
-                **base_result,
-                "decision_layer": "fast",
-                "condition_detail": condition_detail,
-            }
-            return self._enforce_final_decision(
-                fast_result,
-                selling_price=selling_price,
-                condition=condition,
-                market_estimates=market_estimates,
-            )
-
-        product_context: dict[str, object] = {
-            "product_name": " ".join(product_name.split()),
-            "text": " ".join(text.split()),
-            "condition": condition.value,
-            "condition_detail": condition_detail,
-            "condition_source_text": condition_source_text,
-            "condition_extraction_confidence": (
-                condition_extraction_confidence
-            ),
-        }
-        review_payload = self._call_llm_deep_analysis(product_context)
-        try:
-            review = (
-                review_payload
-                if isinstance(review_payload, DeepAnalysisReview)
-                else DeepAnalysisReview.model_validate(review_payload)
-            )
-        except (ValidationError, TypeError, ValueError):
-            review = None
-
-        if (
-            review is None
-            or not self._review_is_acceptable(
-                review,
-                text,
-                condition_detail,
-                condition_source_text,
-            )
-        ):
-            return self._enforce_final_decision(
-                self._alt_deep_result(base_result),
-                selling_price=selling_price,
-                condition=condition,
-                market_estimates=market_estimates,
-            )
-
-        return self._apply_review(
-            base_result=base_result,
-            review=review,
+        return self._enforce_final_decision(
+            self._apply_review(base_result, condition_detail, condition_review),
             selling_price=selling_price,
-            original_condition=condition,
-            original_condition_detail=condition_detail,
-            original_market_estimates=market_estimates,
-            condition_extraction_confidence=(
-                condition_extraction_confidence
-            ),
-            reprice=reprice,
+            condition=condition,
+            market_estimates=market_estimates,
         )
 
 

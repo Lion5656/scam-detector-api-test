@@ -19,6 +19,8 @@ class GroqProvider:
         temperature: float = 0,
         api_key: str | SecretStr | None = None,
         reasoning_effort: str | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
         model_kwargs: dict[str, Any] | None = None,
     ) -> BaseChatModel:
         """依用途建立 Groq 模型，僅傳入有設定的選用參數。"""
@@ -31,8 +33,12 @@ class GroqProvider:
         secret = GroqProvider.resolve_api_key(api_key)
         if secret is not None:
             kwargs["api_key"] = secret
-        if reasoning_effort is not None:
+        if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        if max_retries is not None:
+            kwargs["max_retries"] = max_retries
         if model_kwargs:
             kwargs["model_kwargs"] = dict(model_kwargs)
 

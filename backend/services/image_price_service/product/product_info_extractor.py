@@ -98,5 +98,8 @@ def create_product_info_extractor() -> ProductInfoExtractor:
     llm = groq_provider.create(
         model=settings.NORMALIZER_MODEL,
         temperature=0.1,
+        reasoning_effort=settings.NORMALIZER_REASONING_EFFORT,
+        timeout=settings.PRICE_LLM_TIMEOUT_SECONDS,
+        max_retries=settings.PRICE_LLM_MAX_RETRIES,
     )
     return ProductInfoExtractor(llm=llm)
