@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import threading
 import unicodedata
 from typing import Any, cast
 
@@ -15,6 +16,29 @@ from backend.services.image_price_service.domain.models import (OCRDocument,
 
 class OCRService:
     """透過 Google Vision 擷取文字與版面資訊。"""
+
+    def __init__(self) -> None:
+        # gRPC client 可跨執行緒共用；重複建立會重新解析憑證並重建連線，每次請求多花數百毫秒
+        self._client: Any | None = None
+        self._client_lock = threading.Lock()
+
+    def _get_client(self) -> Any:
+        """延遲建立並重用 Google Vision client。"""
+        if self._client is not None:
+            return self._client
+        with self._client_lock:
+            if self._client is None:
+                from google.cloud import vision
+
+                key_json_str = (
+                    settings.GCP_OCR_SERVICE_ACCOUNT_JSON
+                    or os.getenv("GCP_OCR_SERVICE_ACCOUNT_JSON")
+                )
+                key_info = json.loads(key_json_str) if key_json_str else None
+                credentials = service_account.Credentials.from_service_account_info(key_info)
+                self._client = vision.ImageAnnotatorClient(credentials=credentials)
+        return self._client
+
     @staticmethod
     def _clean_ocr_text(text: str, *, preserve_lines: bool = False) -> str:
         """整理 OCR 空白與常見英數辨識錯字。"""
@@ -74,11 +98,7 @@ class OCRService:
             raise RuntimeError("Google Cloud Vision 套件未安裝，請安裝 google-cloud-vision") from e
 
         try:
-            key_json_str = settings.GCP_OCR_SERVICE_ACCOUNT_JSON or os.getenv("GCP_OCR_SERVICE_ACCOUNT_JSON")
-            key_info = json.loads(key_json_str) if key_json_str else None
-
-            credentials = service_account.Credentials.from_service_account_info(key_info)
-            client = vision.ImageAnnotatorClient(credentials=credentials)
+            client = self._get_client()
             image = vision.Image(content=data)
             language_hints = [h.strip() for h in settings.GCV_LANGUAGE_HINTS.split(",") if h.strip()]
             image_context = vision.ImageContext(language_hints=language_hints)

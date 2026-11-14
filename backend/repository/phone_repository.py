@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from backend.persistence.mysql_connection import engine as db_engine
-from backend.services.phone_service.phone_family import normalize, normalize_db_phone
+from backend.utils.phone_normalizer import normalize, normalize_db_phone
 
 
 class PhoneRepository:

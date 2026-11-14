@@ -1,5 +1,7 @@
 from typing import Any, cast
 
+from starlette.concurrency import run_in_threadpool
+
 from backend.core.config import settings
 from backend.rag.rag_reasoner import analyze_with_rag
 from backend.services.dto.text_analysis import BaseEvidence
@@ -95,7 +97,8 @@ class TextAnalyzer:
 
     async def hybrid_detector(self, text: str) -> dict[str, Any]:
         """混合檢測：規則 + 模型 + 可選的 LLM/RAG"""
-        evidence = self._build_base_evidence(text)
+        # 規則比對與 ONNX 推論都是 CPU 密集的同步運算，移出 event loop 避免阻塞其他請求
+        evidence = await run_in_threadpool(self._build_base_evidence, text)
         base_result = self._base_decision(evidence)
         decision = confidence_router.decide(evidence, base_result)
         if not decision.use_llm:

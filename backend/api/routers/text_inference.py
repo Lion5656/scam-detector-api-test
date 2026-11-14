@@ -27,7 +27,7 @@ async def analyze_text(req: TextRequest) -> ApiResponse[TextResponse]:
 
 
 @router.post("/text/analyze/base", response_model=ApiResponse[TextResponse], summary="純模型文字風險分析", description="僅使用文字分類模型")
-async def model_analyze_text(req: TextRequest) -> ApiResponse[TextResponse] :
+def model_analyze_text(req: TextRequest) -> ApiResponse[TextResponse]:
     try:
         text = normalize_text(req.text)
         if not text:

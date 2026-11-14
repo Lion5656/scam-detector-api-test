@@ -6,6 +6,7 @@ from backend.api.schemas.phone import (PhoneQueryRequest, PhoneQueryResponse,
                                        PhoneReportResponse)
 from backend.services.phone_service import phone_service
 
+# 服務層為同步 MySQL I/O，路由用 def 讓 FastAPI 放進 threadpool 執行，避免阻塞 event loop
 router = APIRouter(prefix="/v1", tags=["phone"])
 
 
@@ -26,7 +27,7 @@ router = APIRouter(prefix="/v1", tags=["phone"])
         }
     },
 )
-async def query_phone(req: PhoneQueryRequest) -> ApiResponse[PhoneQueryResponse]:
+def query_phone(req: PhoneQueryRequest) -> ApiResponse[PhoneQueryResponse]:
     try:
         result = phone_service.query_phone(req.phone_number)
         data = PhoneQueryResponse(**result)
@@ -75,7 +76,7 @@ async def query_phone(req: PhoneQueryRequest) -> ApiResponse[PhoneQueryResponse]
         }
     },
 )
-async def report_phone(req: PhoneReportRequest) -> ApiResponse[PhoneReportResponse]:
+def report_phone(req: PhoneReportRequest) -> ApiResponse[PhoneReportResponse]:
     try:
         result = phone_service.report_suspicious(
             req.phone_number,
