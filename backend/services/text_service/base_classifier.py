@@ -85,7 +85,9 @@ class BaseClassifier:
         if self.classifier is None:
             raise RuntimeError("文字模型未載入")
 
-        tokens = self.tokenizer.encode(text, truncation=True, add_special_tokens=False)
+        # 不截斷：長文交給下方滑動窗口切段，否則超過模型上限（512）的內容會被直接丟掉。
+        # verbose=False 關閉「序列超過模型長度」警告，整段不會直接送進模型
+        tokens = self.tokenizer.encode(text, add_special_tokens=False, verbose=False)
 
         if len(tokens) <= max_length:
             result = cast(list[dict[str, Any]], self.classifier(text, top_k=None))
@@ -103,9 +105,13 @@ class BaseClassifier:
             chunk_text = self.tokenizer.decode(chunk_tokens)
             chunks.append(chunk_text)
 
+        # 每段內容已是 max_length 個 token，模型輸入還要加上 [CLS]/[SEP]，否則段尾會被再截掉
+        model_max_length = max_length + self.tokenizer.num_special_tokens_to_add()
         results = cast(
             list[list[dict[str, Any]]],
-            self.classifier(chunks, truncation=True, max_length=max_length, top_k=None),
+            self.classifier(
+                chunks, truncation=True, max_length=model_max_length, top_k=None, batch_size=8
+            ),
         )
 
         final_label = "未知風險"

@@ -50,4 +50,3 @@ class RAGContext:
         if not hasattr(app.state, 'embeddings'):
             raise RuntimeError("embeddings 尚未初始化")
         return app.state.embeddings
-        return app.state.embeddings

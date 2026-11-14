@@ -2,8 +2,8 @@ from backend.repository.family_repository import FamilyRepository
 from backend.services.phone_service.phone_family import (
     analyze_family,
     build_phone_genealogy,
-    _normalize,
 )
+from backend.utils.phone_normalizer import normalize as _normalize
 
 
 def test_build_phone_genealogy_creates_weighted_family():
@@ -154,7 +154,7 @@ def test_analyze_family_returns_only_score_at_or_above_threshold():
     assert all(item["weight"] >= 40 for item in result["static"])
 
 
-def test_family_repository_loads_related_records():
+def test_family_repository_loads_related_records(monkeypatch):
     class FakeRowMapping:
         def __init__(self, rows):
             self._rows = rows
@@ -211,11 +211,14 @@ def test_family_repository_loads_related_records():
         def connect(self):
             return FakeConn()
 
-    repository = FamilyRepository(FakeEngine())
-    genealogy = repository.load_genealogy("0975000001")
+    from backend.services.phone_service import phone_family
 
-    assert genealogy["families"]
-    assert any(item["電話號碼"] == "975000002" for item in genealogy["records"])
+    monkeypatch.setattr(phone_family, "db_engine", FakeEngine())
+    repository = FamilyRepository(FakeEngine())
+    records = repository.list_family_records("0975000001")
+
+    assert any(item["電話號碼"] == "975000002" for item in records)
+    assert build_phone_genealogy(records)["families"]
 
 
 def test_analyze_family_keeps_target_phone_in_db_genealogy(monkeypatch):
@@ -506,3 +509,49 @@ def test_analyze_family_handles_empty_db(monkeypatch):
     assert "cooccurrence" in result and isinstance(result["cooccurrence"], dict)
     assert result["static"] == []
     assert result["cooccurrence"] == {"shared_reporters": [], "call_density": [], "content_similarity": []}
+
+
+def test_report_events_only_queried_for_candidate_phones(monkeypatch):
+    from backend.services.phone_service import phone_family
+
+    captured = {}
+
+    class FakeRowMapping:
+        def all(self):
+            return [
+                {"reporter_phone": "910000001", "phone_number": "912345001", "report_time": "2024-01-01 08:00:00"},
+                {"reporter_phone": "910000001", "phone_number": "912345003", "report_time": "2024-01-01 09:30:00"},
+            ]
+
+    class FakeResult:
+        def mappings(self):
+            return FakeRowMapping()
+
+    class FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, query, params=None):
+            captured["sql"] = str(query)
+            captured["params"] = params
+            return FakeResult()
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConn()
+
+    monkeypatch.setattr(phone_family, "db_engine", FakeEngine())
+    records = [
+        {"電話號碼": "0912345001", "通報標籤": "其他", "首次通報時間": "2024-01-01 08:00:00"},
+        {"電話號碼": "0912345003", "通報標籤": "其他", "首次通報時間": "2024-01-01 09:30:00"},
+    ]
+
+    genealogy = build_phone_genealogy(records)
+
+    assert "FROM fraud_reports" in captured["sql"]
+    assert set(captured["params"]["phone_list"]) == {"0912345001", "912345001", "0912345003", "912345003"}
+    pair = genealogy["scored_pairs"][0]
+    assert "同通報者 2 小時內通報不同電話(已衰減)" in pair["reasons"]

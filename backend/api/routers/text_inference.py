@@ -19,6 +19,8 @@ async def analyze_text(req: TextRequest) -> ApiResponse[TextResponse]:
         result = await text_analyzer.hybrid_detector(text)
         data = TextResponse(**result)
         return ApiResponse(data=data)
+    except HTTPException:
+        raise
     except Exception as e:
         if settings.DEBUG:
             raise HTTPException(status_code=500, detail=str(e))
@@ -27,7 +29,7 @@ async def analyze_text(req: TextRequest) -> ApiResponse[TextResponse]:
 
 
 @router.post("/text/analyze/base", response_model=ApiResponse[TextResponse], summary="純模型文字風險分析", description="僅使用文字分類模型")
-async def model_analyze_text(req: TextRequest) -> ApiResponse[TextResponse] :
+def model_analyze_text(req: TextRequest) -> ApiResponse[TextResponse]:
     try:
         text = normalize_text(req.text)
         if not text:
@@ -36,6 +38,8 @@ async def model_analyze_text(req: TextRequest) -> ApiResponse[TextResponse] :
         result = text_analyzer.model_detector(text)
         data = TextResponse(**result)
         return ApiResponse(data=data)
+    except HTTPException:
+        raise
     except Exception as e:
         if settings.DEBUG:
             raise HTTPException(status_code=500, detail=str(e))

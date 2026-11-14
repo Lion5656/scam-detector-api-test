@@ -1,6 +1,7 @@
 """以受限狀態證據執行結構化 LLM 商品狀態複核。"""
 
 import json
+import threading
 from typing import Any
 
 from backend.core.config import settings
@@ -35,6 +36,25 @@ class ConditionReviewer:
     ) -> None:
         self._api_key = api_key.strip() if api_key else None
         self._model_name = model_name.strip()
+        # 重用同一個 client 以沿用 HTTP 連線，避免每次複核都重新 TLS 握手
+        self._structured_llm: Any | None = None
+        self._llm_lock = threading.Lock()
+
+    def _get_structured_llm(self) -> Any:
+        if self._structured_llm is not None:
+            return self._structured_llm
+        with self._llm_lock:
+            if self._structured_llm is None:
+                llm = groq_provider.create(
+                    model=self._model_name,
+                    temperature=0,
+                    reasoning_effort="none",
+                    timeout=settings.PRICE_LLM_TIMEOUT_SECONDS,
+                    max_retries=settings.PRICE_LLM_MAX_RETRIES,
+                    api_key=self._api_key,
+                )
+                self._structured_llm = llm.with_structured_output(DeepAnalysisReview)
+        return self._structured_llm
 
     def __call__(
         self,
@@ -50,18 +70,7 @@ class ConditionReviewer:
             field: context.get(field)
             for field in _REVIEW_CONTEXT_FIELDS
         }
-        llm = groq_provider.create(
-            model=self._model_name,
-            temperature=0,
-            reasoning_effort="none",
-            timeout=settings.PRICE_LLM_TIMEOUT_SECONDS,
-            max_retries=settings.PRICE_LLM_MAX_RETRIES,
-            api_key=self._api_key,
-        )
-        structured_llm: Any = llm.with_structured_output(
-            DeepAnalysisReview,
-        )
-        return structured_llm.invoke(
+        return self._get_structured_llm().invoke(
             (
                 f"{_SYSTEM_PROMPT}\n\n"
                 f"輸入：{json.dumps(limited_context, ensure_ascii=False)}"
