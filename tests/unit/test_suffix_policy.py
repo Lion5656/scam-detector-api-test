@@ -89,7 +89,7 @@ def test_analyze_regulated_suffix_skips_model():
     result = detector.analyze("https://www.moe.gov.tw/news")
 
     assert result["label"] == "LOW"
-    assert result["score"] == 0.0
+    assert result["score"] == "0.00"
     assert not classifier.called
 
 
@@ -112,16 +112,106 @@ def test_analyze_bonus_is_capped_at_one():
     assert result["score"] == "1.00"
 
 
-def test_analyze_shortened_url_skips_model_and_is_medium():
+def test_analyze_shortened_url_analyzes_resolved_target():
     classifier = StubClassifier(0.99)
-    detector = UrlDetector()
+    detector = UrlDetector(resolve_redirect=lambda url: "https://tw-post.top/verify")
     detector.classifier = classifier
 
     result = detector.analyze("https://reurl.cc/abc123")
 
-    assert result["score"] == f"{settings.URL_SHORTENER_RISK_BONUS:.2f}"
-    assert result["label"] == "MEDIUM"
+    assert classifier.called
+    assert result["label"] == "HIGH"
+    assert result["reason"].startswith("此短網址實際導向 https://tw-post.top/verify")
+
+
+def test_analyze_unresolved_shortened_url_is_unknown():
+    classifier = StubClassifier(0.99)
+    detector = UrlDetector(resolve_redirect=lambda url: None)
+    detector.classifier = classifier
+
+    result = detector.analyze("https://reurl.cc/abc123")
+
+    assert result == {"label": "UNKNOWN", "score": "0.00", "reason": result["reason"]}
+    assert "短網址" in result["reason"]
     assert not classifier.called
+
+
+def test_analyze_shortened_url_expands_only_once():
+    calls = []
+
+    def resolve(url):
+        calls.append(url)
+        return "https://bit.ly/next"
+
+    detector = UrlDetector(resolve_redirect=resolve)
+    detector.classifier = StubClassifier(0.99)
+
+    result = detector.analyze("https://reurl.cc/abc123")
+
+    assert calls == ["https://reurl.cc/abc123"]
+    assert result["label"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize(
+    "url", ["https://www.moe.gov.tw", "https://www.ntu.edu.tw", "https://www.mnd.mil.tw"]
+)
+def test_restricted_suffix_signal(url):
+    signals = get_suffix_signals(url)
+    assert signals.is_regulated and signals.is_restricted
+
+
+@pytest.mark.parametrize(
+    "url", ["https://www.example.com.tw", "https://myname.idv.tw", "https://a.org.tw"]
+)
+def test_registered_suffix_is_regulated_but_not_restricted(url):
+    signals = get_suffix_signals(url)
+    assert signals.is_regulated and not signals.is_restricted
+
+
+def test_analyze_registered_suffix_runs_model_and_caps_at_medium():
+    classifier = StubClassifier(0.99)
+    detector = UrlDetector()
+    detector.classifier = classifier
+
+    result = detector.analyze("https://abc.com.tw/login/verify-account")
+
+    assert classifier.called
+    assert result["label"] == "MEDIUM"
+    assert result["score"] == f"{settings.URL_HIGH_THRESHOLD - 0.01:.2f}"
+    assert "遭入侵或冒名申請" in result["reason"]
+
+
+def test_analyze_registered_suffix_low_risk_keeps_model_score():
+    detector = make_detector(0.05)
+
+    result = detector.analyze("https://www.example.com.tw")
+
+    assert result["label"] == "LOW"
+    assert result["score"] == "0.05"
+    assert "實名註冊後綴" in result["reason"]
+
+
+@pytest.mark.parametrize("url, suffix_flag, host_flag", [
+    ("https://dcard.tw", True, False),
+    ("https://abc.game.tw", True, False),
+    ("https://nhi-gov-tw.com", False, True),
+    ("https://gov.tw.login-check.xyz", False, True),
+    ("https://shopee.tw", False, False),
+])
+def test_tw_signal_types_are_separated(url, suffix_flag, host_flag):
+    signals = get_suffix_signals(url)
+    assert signals.has_unregulated_tw_suffix is suffix_flag
+    assert signals.has_tw_in_host is host_flag
+
+
+def test_analyze_tw_reason_matches_signal_type():
+    detector = make_detector(0.1)
+
+    suffix_reason = detector.analyze("https://dcard.tw")["reason"]
+    host_reason = detector.analyze("https://nhi-gov-tw.com")["reason"]
+
+    assert "未受管制的 .tw 後綴" in suffix_reason and "夾帶 tw" not in suffix_reason
+    assert "夾帶 tw" in host_reason and "未受管制" not in host_reason
 
 
 @pytest.mark.parametrize("prob, expected", [

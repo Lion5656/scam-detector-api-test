@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     URL_MEDIUM_THRESHOLD: float = 0.3
     URL_MODEL_NAME: str = "url_scam_classifier.joblib"
     URL_TW_RISK_BONUS: float = 0.3
+    URL_EXPAND_SHORTENED: bool = True
+    URL_EXPAND_TIMEOUT_SECONDS: float = 3.0
+    URL_EXPAND_MAX_REDIRECTS: int = 5
 
     DEVICE: str = "cpu"
     BASE_MODEL_PATH: str = str(BACKEND_DIR / "models")
