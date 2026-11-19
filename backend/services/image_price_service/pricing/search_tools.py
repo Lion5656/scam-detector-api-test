@@ -99,7 +99,7 @@ def search_ddgs(
     """透過 DuckDuckGo 搜尋並回傳標準化結果。"""
     from ddgs import DDGS
 
-    with DDGS() as ddgs:
+    with DDGS(timeout=int(settings.SEARCH_TIMEOUT_SECONDS)) as ddgs:
         logger.info("DuckDuckGo 搜尋 query=%r max_results=%d", query, max_results)
         raw_results = list(
             ddgs.text(
