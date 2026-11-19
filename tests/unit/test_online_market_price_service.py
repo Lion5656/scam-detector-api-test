@@ -542,7 +542,7 @@ def test_unknown_condition_combines_all_candidates_without_deduplication() -> No
     assert fakes["serpapi"].calls[0]["query"] == "Apple iPhone 15 256GB 價格"
 
 
-def test_unknown_preflight_uses_six_total_without_condition_quota(
+def test_unknown_preflight_uses_total_without_condition_quota(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
@@ -936,6 +936,37 @@ def test_combined_first_stage_reaching_preflight_target_skips_ddgs(
     assert len(fakes["tavily"].calls) == 1
     assert fakes["ddgs"].calls == []
     assert len(service._price_extractor.calls) == 1
+
+
+@pytest.mark.parametrize(("first_stage_count", "calls_ddgs"), [(3, False), (2, True)])
+def test_first_stage_preflight_target_is_three(
+    monkeypatch,
+    first_stage_count: int,
+    calls_ddgs: bool,
+) -> None:
+    monkeypatch.setattr(
+        search_tools.settings,
+        "TAVILY_SEARCH_API_KEY",
+        SecretStr("tavily-test-key"),
+    )
+    results = [
+        _search_result(
+            product="Apple iPhone 15 256GB",
+            price=30_000 + index * 100,
+            condition_text="全新",
+        )
+        for index in range(first_stage_count)
+    ]
+    service, fakes = _make_service_with_fake_search(
+        {"serpapi": results[:1], "tavily": results[1:], "ddgs": results}
+    )
+
+    service.estimate_price(
+        "Apple iPhone 15 256GB 價格",
+        condition=MarketplaceCondition.NEW,
+    )
+
+    assert (len(fakes["ddgs"].calls) == 1) is calls_ddgs
 
 
 def test_duplicate_candidates_across_search_tools_are_preserved(

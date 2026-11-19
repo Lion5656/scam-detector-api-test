@@ -64,7 +64,7 @@ def test_default_price_risk_policy_matches_documented_thresholds():
         "minimum_market_samples": 3,
         "minimum_market_sites": 1,
         "minimum_iqr_samples": 5,
-        "preflight_multiplier": 2,
+        "preflight_multiplier": 1,
         "small_sample_relative_tolerance": 0.25,
         "small_sample_score_cap": 79,
         "llm_review_min_confidence": 0.80,
