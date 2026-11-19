@@ -261,6 +261,63 @@ def test_serpapi_search_tool_fetches_two_pages(monkeypatch) -> None:
     assert result[-1]["title"] == "商品 20"
 
 
+def _patch_serpapi_pages(monkeypatch, page_behaviors: dict[int, Any]) -> None:
+    """依 start 決定各分頁回傳結果或拋出例外。"""
+
+    class FakeSerpApiClient:
+        def __init__(self, *, api_key: str, timeout: int) -> None:
+            pass
+
+        def search(self, params: dict) -> dict:
+            behavior = page_behaviors[int(params.get("start", 0))]
+            if isinstance(behavior, Exception):
+                raise behavior
+            return {"organic_results": behavior}
+
+    monkeypatch.setattr(search_tools.settings, "SERP_API_KEY", SecretStr("serp-test-key"))
+    monkeypatch.setattr(search_tools.serpapi, "Client", FakeSerpApiClient)
+
+
+@pytest.mark.parametrize("failed_start", [0, 10])
+def test_serpapi_keeps_successful_page_when_other_page_fails(
+    monkeypatch,
+    failed_start: int,
+) -> None:
+    ok_start = 10 - failed_start
+    _patch_serpapi_pages(
+        monkeypatch,
+        {
+            failed_start: TimeoutError("Read timed out"),
+            ok_start: [{"title": "商品 A", "snippet": "售價 NT$1,000"}],
+        },
+    )
+
+    result = search_tools.search_serpapi("目標商品 價格", 20)
+
+    assert result == [{"title": "商品 A", "snippet": "售價 NT$1,000"}]
+
+
+def test_serpapi_keeps_second_page_when_first_page_is_empty(monkeypatch) -> None:
+    _patch_serpapi_pages(
+        monkeypatch,
+        {0: [], 10: [{"title": "商品 B", "snippet": "售價 NT$2,000"}]},
+    )
+
+    result = search_tools.search_serpapi("目標商品 價格", 20)
+
+    assert [item["title"] for item in result] == ["商品 B"]
+
+
+def test_serpapi_raises_when_all_pages_fail(monkeypatch) -> None:
+    _patch_serpapi_pages(
+        monkeypatch,
+        {0: TimeoutError("page 0"), 10: TimeoutError("page 10")},
+    )
+
+    with pytest.raises(TimeoutError, match="page 0"):
+        search_tools.search_serpapi("目標商品 價格", 20)
+
+
 def test_tavily_search_tool_calls_api_and_normalizes_results(
     monkeypatch,
 ) -> None:
