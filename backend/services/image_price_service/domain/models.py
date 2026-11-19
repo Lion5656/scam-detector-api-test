@@ -18,6 +18,10 @@ class MarketplaceCondition(str, Enum):
     UNKNOWN = "unknown"
 
 
+# 搜尋結果文字出現任一詞即視為二手，用於查價預檢與候選品況比對
+USED_CONDITION_TERMS = ("二手", "中古", "拆封", "拆擺", "展示品", "使用過")
+
+
 class MarketplaceLayout(str, Enum):
     """商品頁截圖的版面類型。"""
 

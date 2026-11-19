@@ -196,6 +196,45 @@ def test_code_rejects_hallucinated_evidence_wrong_condition_and_bad_index() -> N
     assert candidates == []
 
 
+def test_new_target_accepts_unlabeled_price_without_used_terms() -> None:
+    results = [
+        {"title": "Apple iPhone 15 256GB", "snippet": "售價 NT$29,900"},
+        {"title": "Apple iPhone 15 256GB 拆封品", "snippet": "售價 NT$25,000"},
+    ]
+    extractor, _ = _extractor(
+        {
+            "candidates": [
+                {
+                    "result_index": 0,
+                    "price": 29_900,
+                    "condition": "unknown",
+                    "evidence": "售價 NT$29,900",
+                },
+                {
+                    "result_index": 1,
+                    "price": 25_000,
+                    "condition": "unknown",
+                    "evidence": "售價 NT$25,000",
+                },
+            ]
+        }
+    )
+
+    new_candidates = extractor.extract(
+        results,
+        MarketplaceCondition.NEW,
+        product_query="Apple iPhone 15 256GB",
+    )
+    used_candidates = extractor.extract(
+        results,
+        MarketplaceCondition.USED,
+        product_query="Apple iPhone 15 256GB",
+    )
+
+    assert [candidate.price for candidate in new_candidates] == [29_900]
+    assert used_candidates == []
+
+
 def test_code_keeps_policy_boundary_and_rejects_larger_price() -> None:
     policy = DEFAULT_PRICE_RISK_POLICY
     maximum = policy.maximum_supported_price
