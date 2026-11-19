@@ -367,7 +367,7 @@ def test_known_new_condition_only_accepts_new_prices() -> None:
     assert {candidate.condition for candidate in estimate.candidates} == {
         MarketplaceCondition.NEW
     }
-    assert fakes["serpapi"].calls[0]["query"] == "Apple iPhone 15 256GB 價格 全新"
+    assert fakes["serpapi"].calls[0]["query"] == "Apple iPhone 15 256GB 價格"
 
 
 def test_service_filters_results_for_other_products() -> None:
@@ -482,10 +482,7 @@ def test_unknown_condition_combines_all_candidates_without_deduplication() -> No
     ]
     assert len(fakes["serpapi"].calls) == 1
     assert len(service._price_extractor.calls) == 1
-    assert (
-        fakes["serpapi"].calls[0]["query"]
-        == "Apple iPhone 15 256GB 價格 全新 二手"
-    )
+    assert fakes["serpapi"].calls[0]["query"] == "Apple iPhone 15 256GB 價格"
 
 
 def test_unknown_preflight_uses_six_total_without_condition_quota(
@@ -975,6 +972,8 @@ def test_no_results_returns_not_found() -> None:
     ("title", "snippet", "condition", "expected"),
     [
         ("目標商品 全新", "售價 NT$20,000", MarketplaceCondition.NEW, True),
+        ("目標商品", "售價 NT$20,000", MarketplaceCondition.NEW, True),
+        ("目標商品", "售價 NT$20,000", MarketplaceCondition.USED, False),
         ("目標商品 二手", "售價 18,000 元", MarketplaceCondition.USED, True),
         ("目標商品 二手", "售價 NT$18,000", MarketplaceCondition.NEW, False),
         ("目標商品 全新", "月付 NT$999", MarketplaceCondition.NEW, False),

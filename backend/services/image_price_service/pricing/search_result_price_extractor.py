@@ -14,8 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.core.config import settings
 from backend.providers import groq_provider
 from backend.services.dto.price_analysis import MarketPriceCandidateEvidence
-from backend.services.image_price_service.domain.models import \
-    MarketplaceCondition
+from backend.services.image_price_service.domain.models import (
+    USED_CONDITION_TERMS, MarketplaceCondition)
 from backend.services.image_price_service.domain.policy import (
     DEFAULT_PRICE_RISK_POLICY, PriceRiskPolicy)
 
@@ -278,8 +278,6 @@ def _validate_candidates(
     for candidate_index, extracted in enumerate(extraction.candidates):
         if extracted.result_index >= len(search_results):
             continue
-        if (condition is not MarketplaceCondition.UNKNOWN and extracted.condition is not condition):
-            continue
         if extracted.price > policy.maximum_supported_price:
             continue
 
@@ -289,6 +287,8 @@ def _validate_candidates(
             for part in (source["title"], source["snippet"])
             if part
         )
+        if not _matches_condition(extracted.condition, condition, source_text):
+            continue
         evidence = extracted.evidence.strip()
         if evidence not in source_text:
             continue
@@ -309,6 +309,25 @@ def _validate_candidates(
             )
         )
     return candidates
+
+
+def _matches_condition(
+    extracted: MarketplaceCondition,
+    target: MarketplaceCondition,
+    source_text: str,
+) -> bool:
+    """判斷候選品況是否可用於目標品況的市場區間。
+
+    商店頁多半不標示「全新」，因此目標為 NEW 時也接受未標示品況、且來源文字
+    沒有任何二手詞的候選；USED 仍要求明確二手，避免混入新品價拉高二手行情。
+    """
+    if target is MarketplaceCondition.UNKNOWN or extracted is target:
+        return True
+    return (
+        target is MarketplaceCondition.NEW
+        and extracted is MarketplaceCondition.UNKNOWN
+        and not any(term in source_text for term in USED_CONDITION_TERMS)
+    )
 
 
 default_search_result_price_extractor = SearchResultPriceExtractor(

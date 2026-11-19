@@ -9,8 +9,8 @@ from typing import Any, Literal, cast
 from backend.services.dto.price_analysis import (MarketPriceCandidateEvidence,
                                                  MarketPriceEstimate,
                                                  SearchTool)
-from backend.services.image_price_service.domain.models import \
-    MarketplaceCondition
+from backend.services.image_price_service.domain.models import (
+    USED_CONDITION_TERMS, MarketplaceCondition)
 from backend.services.image_price_service.domain.policy import (
     DEFAULT_PRICE_RISK_POLICY, PriceRiskPolicy)
 from backend.services.image_price_service.pricing.search_result_price_extractor import (
@@ -34,8 +34,6 @@ _PRICE_RANGE_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _NON_SALE_TERMS = ("月付", "分期", "折價", "折扣", "運費", "定金")
-_NEW_TERMS = ("全新", "新品", "未拆", "未使用")
-_USED_TERMS = ("二手", "中古", "拆封", "拆擺", "展示品", "使用過")
 
 
 class OnlineMarketPriceService:
@@ -274,14 +272,11 @@ class OnlineMarketPriceService:
         if not text.strip():
             return False
 
-        has_used_term = any(term in text for term in _USED_TERMS)
-        if condition is MarketplaceCondition.NEW:
-            if has_used_term or not any(term in text for term in _NEW_TERMS):
-                return False
-        elif (
-            condition is MarketplaceCondition.USED
-            and not has_used_term
-        ):
+        # 商店頁多半不寫「全新」，因此 NEW 只排除明確二手；USED 仍需明確二手詞
+        has_used_term = any(term in text for term in USED_CONDITION_TERMS)
+        if condition is MarketplaceCondition.NEW and has_used_term:
+            return False
+        if condition is MarketplaceCondition.USED and not has_used_term:
             return False
 
         for match in _PRICE_RE.finditer(text):
@@ -502,12 +497,10 @@ class OnlineMarketPriceService:
     def _condition_search_term(
         condition: MarketplaceCondition,
     ) -> str:
-        """只加入必要的全新／二手搜尋關鍵字。"""
-        if condition is MarketplaceCondition.NEW:
-            return "全新"
+        """只有二手需要加關鍵字；其餘品況加詞只會窄化搜尋，改由結果文字判斷。"""
         if condition is MarketplaceCondition.USED:
             return "二手"
-        return "全新 二手"
+        return ""
 
     @staticmethod
     def _append_condition_term(query: str, condition_term: str) -> str:
