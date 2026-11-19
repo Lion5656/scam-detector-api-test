@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     ONLINE_PRICE_MAX_RESULTS: int = 20
     SEARCH_DOMAIN: list[str] = ["biggo.com.tw", "momo.com.tw", "pchome.com.tw", "shopee.tw", "ruten.com.tw", "tw.carousell.com"]
     EXCLUDE_DOMAIN: list[str] = ["zh.wikipedia.org"]
-    SEARCH_TIMEOUT_SECONDS: float = 10.0
+    SEARCH_TIMEOUT_SECONDS: float = 20.0
     GROQ_FALLBACK_RETRY_DELAY_SECONDS: float = 2.0
     GROQ_RATE_LIMIT_MAX_WAIT_SECONDS: float = 30.0
     PRODUCT_MATCH_FUZZY_MIN_SCORE: int = 86
