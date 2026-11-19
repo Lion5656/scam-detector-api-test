@@ -146,7 +146,8 @@ DEFAULT_PRICE_RISK_POLICY = PriceRiskPolicy(
     minimum_market_samples=3,
     minimum_market_sites=1,
     minimum_iqr_samples=5,
-    preflight_multiplier=2,
+    # 第一階段（SerpApi + Tavily）預檢合格數達 3 筆即停止，不足才呼叫 DuckDuckGo
+    preflight_multiplier=1,
     small_sample_relative_tolerance=0.25,
     small_sample_score_cap=79,
     llm_review_min_confidence=0.80,
