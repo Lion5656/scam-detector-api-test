@@ -18,7 +18,11 @@ def search_serpapi(
     query: str,
     max_results: int = 10,
 ) -> list[dict[str, str]]:
-    """透過 SerpApi 搜尋並回傳標準化結果；多頁時同時發出請求。"""
+    """透過 SerpApi 搜尋並回傳標準化結果；多頁時同時發出請求。
+
+    各分頁獨立計算逾時與成敗：任一分頁失敗或為空時仍保留其他分頁結果，
+    只有全部分頁都失敗時才拋出例外。
+    """
     api_key = (
         settings.SERP_API_KEY.get_secret_value()
         or os.getenv("SERP_API_KEY", "")
@@ -29,18 +33,21 @@ def search_serpapi(
     logger.info("SerpApi 搜尋 query=%r max_results=%d", query, max_results)
     page_starts = list(range(0, max_results, 10))
     with ThreadPoolExecutor(max_workers=max(1, len(page_starts))) as executor:
-        pages = list(
-            executor.map(
-                lambda start: _fetch_serpapi_page(api_key, query, start),
-                page_starts,
-            )
-        )
+        futures = [
+            executor.submit(_fetch_serpapi_page, api_key, query, start)
+            for start in page_starts
+        ]
 
     organic_results: list[dict[str, Any]] = []
-    for page_results in pages:
-        if not page_results:
-            break
-        organic_results.extend(page_results)
+    page_errors: list[Exception] = []
+    for start, future in zip(page_starts, futures):
+        try:
+            organic_results.extend(future.result())
+        except Exception as error:
+            logger.warning("SerpApi 分頁失敗 start=%d 錯誤=%s", start, error)
+            page_errors.append(error)
+    if page_errors and len(page_errors) == len(page_starts):
+        raise page_errors[0]
 
     results = [
         {
